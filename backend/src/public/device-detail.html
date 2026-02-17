@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sync-V - Device Detail</title>
+  <link rel="stylesheet" href="/dashboard/css/style.css">
+</head>
+<body>
+  <div id="nav-bar"></div>
+
+  <div class="page">
+    <div style="margin-bottom: 16px;">
+      <a href="/dashboard/devices.html" class="back-link" id="back-link">Back to Devices</a>
+    </div>
+
+    <h1 class="page-title" id="device-title"><div class="skeleton skeleton-heading"></div></h1>
+    <p class="page-subtitle" id="device-subtitle"><div class="skeleton skeleton-text" style="width:40%"></div></p>
+
+    <div class="detail-grid" id="detail-grid">
+      <div class="card"><div class="skeleton skeleton-card" style="height:160px"></div></div>
+      <div class="card"><div class="skeleton skeleton-card" style="height:160px"></div></div>
+    </div>
+
+    <div class="card" style="margin-bottom: 24px">
+      <div class="card-title">Metadata</div>
+      <div id="metadata-section">
+        <div class="skeleton skeleton-text" style="width:60%"></div>
+        <div class="skeleton skeleton-text" style="width:45%"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title" id="logs-title">Recent Logs</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Filename</th>
+              <th>Size</th>
+              <th>Checksum</th>
+              <th>Uploaded</th>
+            </tr>
+          </thead>
+          <tbody id="logs-table"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="/dashboard/js/auth.js"></script>
+  <script src="/dashboard/js/api.js"></script>
+  <script src="/dashboard/js/app.js"></script>
+  <script>
+    if (!AUTH.requireAuth()) throw new Error('Not authenticated');
+    renderNavBar('devices');
+
+    // Insert back icon
+    document.getElementById('back-link').innerHTML = ICONS.back + ' Back to Devices';
+
+    // Show skeleton for logs table
+    document.getElementById('logs-table').innerHTML = skeletonRows(3, 4);
+
+    var params = new URLSearchParams(window.location.search);
+    var deviceId = params.get('id');
+
+    if (!deviceId) {
+      window.location.href = '/dashboard/devices.html';
+    }
+
+    async function loadDetail() {
+      var data = await apiGet('/api/dashboard/device/' + encodeURIComponent(deviceId));
+      if (!data) {
+        document.getElementById('device-title').textContent = 'Device Not Found';
+        document.getElementById('device-subtitle').textContent = 'The requested device could not be loaded.';
+        return;
+      }
+
+      var dev = data.device;
+      document.getElementById('device-title').textContent = dev.name;
+      document.getElementById('device-subtitle').innerHTML = escapeHtml(dev.id) + ' &mdash; ' + statusBadge(dev.status);
+
+      document.getElementById('detail-grid').innerHTML =
+        '<div class="card">' +
+          '<div class="card-title">Device Info</div>' +
+          '<div class="detail-row"><span class="detail-key">ID</span><span class="detail-value text-mono">' + escapeHtml(dev.id) + '</span></div>' +
+          '<div class="detail-row"><span class="detail-key">Name</span><span class="detail-value">' + escapeHtml(dev.name) + '</span></div>' +
+          '<div class="detail-row"><span class="detail-key">Type</span><span class="detail-value">' + escapeHtml(dev.type) + '</span></div>' +
+          '<div class="detail-row"><span class="detail-key">Status</span><span class="detail-value">' + statusBadge(dev.status) + '</span></div>' +
+        '</div>' +
+        '<div class="card">' +
+          '<div class="card-title">System Info</div>' +
+          '<div class="detail-row"><span class="detail-key">Firmware</span><span class="detail-value text-mono">' + escapeHtml(dev.firmware_version || '-') + '</span></div>' +
+          '<div class="detail-row"><span class="detail-key">Last Seen</span><span class="detail-value">' + formatDate(dev.last_seen) + '</span></div>' +
+          '<div class="detail-row"><span class="detail-key">Created</span><span class="detail-value">' + formatDate(dev.created_at) + '</span></div>' +
+          '<div class="detail-row"><span class="detail-key">Logs</span><span class="detail-value"><strong>' + data.logCount + '</strong></span></div>' +
+        '</div>';
+
+      // Parse metadata JSON
+      var metaEl = document.getElementById('metadata-section');
+      try {
+        var meta = JSON.parse(dev.metadata);
+        var keys = Object.keys(meta);
+        if (keys.length === 0) {
+          metaEl.innerHTML = '<span style="color:var(--text-muted)">No metadata</span>';
+        } else {
+          metaEl.innerHTML = keys.map(function(k) {
+            return '<div class="detail-row"><span class="detail-key">' + escapeHtml(k) + '</span><span class="detail-value">' + escapeHtml(String(meta[k])) + '</span></div>';
+          }).join('');
+        }
+      } catch (e) {
+        metaEl.innerHTML = '<span class="text-mono" style="color:var(--text-muted)">' + escapeHtml(dev.metadata) + '</span>';
+      }
+
+      // Render logs
+      document.getElementById('logs-title').textContent = 'Recent Logs (' + data.logCount + ')';
+      var logsTable = document.getElementById('logs-table');
+      if (data.recentLogs.length === 0) {
+        logsTable.innerHTML = '<tr><td colspan="4" class="empty-state">' +
+          '<div class="empty-icon-circle">' + ICONS.emptyBox + '</div>' +
+          '<h3>No logs uploaded</h3></td></tr>';
+      } else {
+        logsTable.innerHTML = data.recentLogs.map(function(log) {
+          return '<tr style="cursor:default">' +
+            '<td>' + escapeHtml(log.filename) + '</td>' +
+            '<td>' + formatSize(log.size) + '</td>' +
+            '<td class="text-mono"><span class="text-truncate">' + escapeHtml(log.checksum) + '</span></td>' +
+            '<td>' + formatDate(log.uploaded_at) + '</td>' +
+          '</tr>';
+        }).join('');
+      }
+    }
+
+    loadDetail();
+  </script>
+</body>
+</html>

@@ -1,4 +1,5 @@
 import express from 'express';
+import path from 'path';
 import Database from 'better-sqlite3';
 import { createDatabase } from './models/Database';
 import { DeviceModel } from './models/Device';
@@ -60,6 +61,10 @@ export function createApp(dbPath?: string): { app: express.Express; db: Database
   app.use('/api/logs', requireAuth('viewer'), createLogRoutes(logIngestion));
   app.use('/api/firmware', requireAuth('viewer'), createFirmwareRoutes(firmwareDistribution));
   app.use('/api/dashboard', requireAuth('viewer'), createDashboardRoutes(dashboardService));
+
+  // Dashboard web UI (static files)
+  app.use('/dashboard', express.static(path.join(__dirname, '..', 'src', 'public')));
+  app.get('/', (_req, res) => { res.redirect('/dashboard/'); });
 
   // Health check
   app.get('/health', (_req, res) => {

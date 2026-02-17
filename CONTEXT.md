@@ -94,6 +94,7 @@ cd integration && npm install && npx jest
 | `middleware/auth.ts`              | JWT auth + role hierarchy + rate limiter |
 | `middleware/authMiddleware.ts`    | Express JWT middleware wrapper      |
 | `utils/validation.ts`            | SHA256/filename/deviceId validators |
+| `public/`                         | Web admin dashboard (HTML/CSS/JS)  |
 
 ## Architecture Decisions
 
@@ -109,8 +110,8 @@ cd integration && npm install && npx jest
 |-------------|--------|-------|--------------------|
 | Drive (C++) | 7      | ~50   | N/A (GoogleTest)   |
 | Mobile      | 5      | 43    | 95.9%              |
-| Backend     | 7      | 89    | 87.8%              |
-| Integration | 4      | 18    | N/A (cross-module) |
+| Backend     | 12     | 131   | 93.3%              |
+| Integration | 5      | 23    | N/A (cross-module) |
 
 ## Stage 2 Integration Points
 

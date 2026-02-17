@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sync-V - Logs</title>
+  <link rel="stylesheet" href="/dashboard/css/style.css">
+</head>
+<body>
+  <div id="nav-bar"></div>
+
+  <div class="page">
+    <h1 class="page-title">Log Browser</h1>
+    <p class="page-subtitle">Uploaded log files from all devices</p>
+
+    <div class="filter-bar">
+      <div class="search-wrap">
+        <span class="search-icon"></span>
+        <input type="text" id="filter-device" placeholder="Filter by Device ID...">
+      </div>
+      <button class="btn btn-secondary" onclick="filterLogs()">Filter</button>
+      <button class="btn btn-ghost" onclick="clearFilter()">Clear</button>
+    </div>
+
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Log ID</th>
+              <th>Device</th>
+              <th>Filename</th>
+              <th>Size</th>
+              <th>Checksum</th>
+              <th>Uploaded</th>
+            </tr>
+          </thead>
+          <tbody id="logs-table"></tbody>
+        </table>
+      </div>
+      <div id="pagination"></div>
+    </div>
+  </div>
+
+  <script src="/dashboard/js/auth.js"></script>
+  <script src="/dashboard/js/api.js"></script>
+  <script src="/dashboard/js/app.js"></script>
+  <script>
+    if (!AUTH.requireAuth()) throw new Error('Not authenticated');
+    renderNavBar('logs');
+
+    // Insert search icon
+    document.querySelector('.search-icon').innerHTML = ICONS.search;
+
+    // Show skeleton loading
+    document.getElementById('logs-table').innerHTML = skeletonRows(5, 6);
+
+    var allLogs = [];
+    var currentPage = 1;
+    var pageSize = 50;
+
+    async function loadLogs() {
+      allLogs = await apiGet('/api/dashboard/logs') || [];
+      currentPage = 1;
+      renderLogs(allLogs);
+
+      // Setup sortable columns
+      makeSortable('logs-table', allLogs, function(sorted) {
+        allLogs = sorted;
+        currentPage = 1;
+        renderLogs(sorted);
+      }, [
+        { key: function(l) { return l.id; }, type: 'string' },
+        { key: function(l) { return l.device_id; }, type: 'string' },
+        { key: function(l) { return l.filename; }, type: 'string' },
+        { key: function(l) { return l.size; }, type: 'number' },
+        null, // checksum — not sortable
+        { key: function(l) { return l.uploaded_at; }, type: 'date' }
+      ]);
+    }
+
+    function renderLogs(logs) {
+      var tbody = document.getElementById('logs-table');
+      var total = logs.length;
+      var start = (currentPage - 1) * pageSize;
+      var end = Math.min(start + pageSize, total);
+      var shown = logs.slice(start, end);
+
+      if (total === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">' +
+          '<div class="empty-icon-circle">' + ICONS.emptyBox + '</div>' +
+          '<h3>No logs found</h3></td></tr>';
+        document.getElementById('pagination').innerHTML = '';
+        return;
+      }
+
+      tbody.innerHTML = shown.map(function(log) {
+        return '<tr style="cursor:default">' +
+          '<td class="text-mono"><span class="text-truncate">' + escapeHtml(log.id) + '</span></td>' +
+          '<td><a href="/dashboard/device-detail.html?id=' + encodeURIComponent(log.device_id) + '">' + escapeHtml(log.device_id) + '</a></td>' +
+          '<td>' + escapeHtml(log.filename) + '</td>' +
+          '<td>' + formatSize(log.size) + '</td>' +
+          '<td class="text-mono"><span class="text-truncate">' + escapeHtml(log.checksum) + '</span></td>' +
+          '<td>' + formatDate(log.uploaded_at) + '</td>' +
+        '</tr>';
+      }).join('');
+
+      // Pagination bar
+      var pag = document.getElementById('pagination');
+      var totalPages = Math.ceil(total / pageSize);
+      pag.innerHTML = '<div class="pagination-bar">' +
+        '<span class="pagination-info">Showing ' + (start + 1) + '-' + end + ' of ' + total + '</span>' +
+        '<div class="pagination-controls">' +
+          '<button class="btn btn-outline btn-sm" onclick="prevPage()" ' + (currentPage <= 1 ? 'disabled' : '') + '>' + ICONS.prev + ' Prev</button>' +
+          '<button class="btn btn-outline btn-sm" onclick="nextPage()" ' + (currentPage >= totalPages ? 'disabled' : '') + '>Next ' + ICONS.next + '</button>' +
+        '</div>' +
+      '</div>';
+    }
+
+    function prevPage() {
+      if (currentPage > 1) { currentPage--; renderCurrentLogs(); }
+    }
+
+    function nextPage() {
+      var deviceFilter = document.getElementById('filter-device').value.trim();
+      var logs = deviceFilter ? allLogs.filter(function(l) { return l.device_id === deviceFilter; }) : allLogs;
+      var totalPages = Math.ceil(logs.length / pageSize);
+      if (currentPage < totalPages) { currentPage++; renderCurrentLogs(); }
+    }
+
+    function renderCurrentLogs() {
+      var deviceFilter = document.getElementById('filter-device').value.trim();
+      var logs = deviceFilter ? allLogs.filter(function(l) { return l.device_id === deviceFilter; }) : allLogs;
+      renderLogs(logs);
+    }
+
+    async function filterLogs() {
+      var deviceId = document.getElementById('filter-device').value.trim();
+      currentPage = 1;
+      if (!deviceId) { renderLogs(allLogs); return; }
+
+      var logs = await apiGet('/api/logs/device/' + encodeURIComponent(deviceId));
+      if (logs) { renderLogs(logs); }
+    }
+
+    function clearFilter() {
+      document.getElementById('filter-device').value = '';
+      currentPage = 1;
+      renderLogs(allLogs);
+    }
+
+    loadLogs();
+  </script>
+</body>
+</html>

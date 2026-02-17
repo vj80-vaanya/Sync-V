@@ -92,7 +92,7 @@ npx jest --coverage
 npx tsc --noEmit
 ```
 
-Expected: 7 test suites, 89 tests passing, ~88% statement coverage.
+Expected: 12 test suites, 131 tests passing, ~93% statement coverage.
 
 ### Integration Tests
 
@@ -103,7 +103,7 @@ cd integration
 npx jest
 ```
 
-Expected: 4 test suites, 18 tests passing.
+Expected: 5 test suites, 23 tests passing.
 
 ### Run Everything at Once
 
@@ -263,6 +263,17 @@ import { createApp } from './index';
 const { app, db } = createApp('./data/syncv.db');
 app.listen(3000);
 ```
+
+### Web Admin Dashboard
+
+The backend includes a built-in web dashboard at `/dashboard`.
+
+1. Start the server: `node dist/index.js`
+2. Open `http://localhost:3000/` in your browser (redirects to `/dashboard/`)
+3. Login with a registered user
+4. Navigate between: **Overview** (fleet stats), **Devices** (list + filters), **Logs** (browser), **Firmware** (management + upload)
+
+The dashboard uses the same REST API endpoints and JWT authentication as the mobile app.
 
 ---
 

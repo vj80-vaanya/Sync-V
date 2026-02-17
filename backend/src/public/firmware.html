@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sync-V - Firmware</title>
+  <link rel="stylesheet" href="/dashboard/css/style.css">
+</head>
+<body>
+  <div id="nav-bar"></div>
+
+  <div class="page">
+    <h1 class="page-title">Firmware Management</h1>
+    <p class="page-subtitle">Firmware packages for your device fleet</p>
+
+    <div class="stats-grid" id="fw-stats"></div>
+
+    <!-- Upload form (admin/technician only) -->
+    <div id="upload-section" style="display:none">
+      <div class="form-section">
+        <h3>Upload Firmware Package</h3>
+        <form id="upload-form">
+          <div class="form-row">
+            <div class="form-group">
+              <label>Version</label>
+              <input type="text" id="fw-version" placeholder="e.g. 2.0.0" required>
+            </div>
+            <div class="form-group">
+              <label>Device Type</label>
+              <input type="text" id="fw-device-type" placeholder="e.g. typeA" required>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Filename</label>
+              <input type="text" id="fw-filename" placeholder="e.g. fw_v2.0.bin" required>
+            </div>
+            <div class="form-group">
+              <label>Size (bytes)</label>
+              <input type="number" id="fw-size" placeholder="e.g. 10240" required>
+            </div>
+          </div>
+          <div class="form-row full">
+            <div class="form-group">
+              <label>SHA256 Hash</label>
+              <input type="text" id="fw-sha256" placeholder="64-character hex hash" required>
+            </div>
+          </div>
+          <div class="form-row full">
+            <div class="form-group">
+              <label>Description</label>
+              <input type="text" id="fw-description" placeholder="Release notes">
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary" id="upload-btn">Upload Firmware</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">All Firmware Packages</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Version</th>
+              <th>Device Type</th>
+              <th>Filename</th>
+              <th>Size</th>
+              <th>SHA256</th>
+              <th>Released</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody id="fw-table"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="/dashboard/js/auth.js"></script>
+  <script src="/dashboard/js/api.js"></script>
+  <script src="/dashboard/js/app.js"></script>
+  <script>
+    if (!AUTH.requireAuth()) throw new Error('Not authenticated');
+    renderNavBar('firmware');
+
+    // Show skeleton loading
+    document.getElementById('fw-stats').innerHTML = skeletonCards(3);
+    document.getElementById('fw-table').innerHTML = skeletonRows(4, 7);
+
+    // Add upload icon to submit button
+    document.getElementById('upload-btn').innerHTML = ICONS.upload + ' Upload Firmware';
+
+    // Show upload form for admin/technician
+    var user = AUTH.getUser();
+    if (user && (user.role === 'admin' || user.role === 'technician')) {
+      document.getElementById('upload-section').style.display = 'block';
+    }
+
+    var allFirmware = [];
+
+    async function loadFirmware() {
+      var summary = await apiGet('/api/dashboard/firmware');
+      allFirmware = await apiGet('/api/firmware') || [];
+
+      if (summary) {
+        var entries = Object.entries(summary.byDeviceType);
+        var statsHtml = '<div class="stat-card stat-border-indigo">' +
+          '<div class="stat-icon" style="background:var(--primary-50);color:var(--primary)">' + ICONS.package + '</div>' +
+          '<div class="stat-value">' + summary.totalFirmwarePackages + '</div>' +
+          '<div class="stat-label">Total Packages</div>' +
+        '</div>';
+        entries.forEach(function(e) {
+          statsHtml += '<div class="stat-card">' +
+            '<div class="stat-value">' + e[1] + '</div>' +
+            '<div class="stat-label">' + escapeHtml(e[0]) + '</div>' +
+          '</div>';
+        });
+        document.getElementById('fw-stats').innerHTML = statsHtml;
+      }
+
+      renderFirmware(allFirmware);
+
+      // Setup sortable columns
+      makeSortable('fw-table', allFirmware, renderFirmware, [
+        { key: function(fw) { return fw.version; }, type: 'string' },
+        { key: function(fw) { return fw.device_type; }, type: 'string' },
+        { key: function(fw) { return fw.filename; }, type: 'string' },
+        { key: function(fw) { return fw.size; }, type: 'number' },
+        null, // SHA256 — not sortable
+        { key: function(fw) { return fw.release_date; }, type: 'date' },
+        null  // Description — not sortable
+      ]);
+    }
+
+    function renderFirmware(fwList) {
+      var tbody = document.getElementById('fw-table');
+      if (fwList.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty-state">' +
+          '<div class="empty-icon-circle">' + ICONS.emptyBox + '</div>' +
+          '<h3>No firmware packages uploaded</h3></td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = fwList.map(function(fw) {
+        return '<tr style="cursor:default">' +
+          '<td><strong>' + escapeHtml(fw.version) + '</strong></td>' +
+          '<td><span class="badge badge-muted">' + escapeHtml(fw.device_type) + '</span></td>' +
+          '<td>' + escapeHtml(fw.filename) + '</td>' +
+          '<td>' + formatSize(fw.size) + '</td>' +
+          '<td class="text-mono"><span class="text-truncate">' + escapeHtml(fw.sha256) + '</span></td>' +
+          '<td>' + formatDate(fw.release_date) + '</td>' +
+          '<td>' + escapeHtml(fw.description || '-') + '</td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    document.getElementById('upload-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+
+      var body = {
+        version: document.getElementById('fw-version').value.trim(),
+        deviceType: document.getElementById('fw-device-type').value.trim(),
+        filename: document.getElementById('fw-filename').value.trim(),
+        size: parseInt(document.getElementById('fw-size').value, 10) || 0,
+        sha256: document.getElementById('fw-sha256').value.trim().toLowerCase(),
+        description: document.getElementById('fw-description').value.trim()
+      };
+
+      var result = await apiPost('/api/firmware', body);
+      if (result && result.firmwareId) {
+        showToast('Firmware uploaded successfully: ' + result.firmwareId, 'success');
+        document.getElementById('upload-form').reset();
+        loadFirmware();
+      } else if (result && result.error) {
+        showToast(result.error, 'error');
+      }
+    });
+
+    loadFirmware();
+  </script>
+</body>
+</html>

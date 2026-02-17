@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sync-V - Devices</title>
+  <link rel="stylesheet" href="/dashboard/css/style.css">
+</head>
+<body>
+  <div id="nav-bar"></div>
+
+  <div class="page">
+    <h1 class="page-title">Devices</h1>
+    <p class="page-subtitle">Registered devices in your fleet</p>
+
+    <div class="filter-bar">
+      <div class="search-wrap">
+        <span class="search-icon"></span>
+        <input type="text" id="search-input" placeholder="Search devices...">
+      </div>
+      <select id="filter-type">
+        <option value="">All Types</option>
+      </select>
+      <select id="filter-status">
+        <option value="">All Status</option>
+        <option value="online">Online</option>
+        <option value="offline">Offline</option>
+        <option value="unknown">Unknown</option>
+      </select>
+    </div>
+
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Firmware</th>
+              <th>Last Seen</th>
+            </tr>
+          </thead>
+          <tbody id="device-table"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="/dashboard/js/auth.js"></script>
+  <script src="/dashboard/js/api.js"></script>
+  <script src="/dashboard/js/app.js"></script>
+  <script>
+    if (!AUTH.requireAuth()) throw new Error('Not authenticated');
+    renderNavBar('devices');
+
+    // Insert search icon
+    document.querySelector('.search-icon').innerHTML = ICONS.search;
+
+    var allDevices = [];
+    var deviceTypes = new Set();
+
+    // Show skeleton loading
+    document.getElementById('device-table').innerHTML = skeletonRows(5, 6);
+
+    async function loadDevices() {
+      allDevices = await apiGet('/api/devices') || [];
+      deviceTypes = new Set(allDevices.map(function(d) { return d.type; }));
+
+      var typeSelect = document.getElementById('filter-type');
+      typeSelect.innerHTML = '<option value="">All Types</option>';
+      deviceTypes.forEach(function(t) {
+        typeSelect.innerHTML += '<option value="' + escapeHtml(t) + '">' + escapeHtml(t) + '</option>';
+      });
+
+      renderDevices(allDevices);
+
+      // Setup sortable columns
+      makeSortable('device-table', allDevices, renderDevices, [
+        { key: function(d) { return d.id; }, type: 'string' },
+        { key: function(d) { return d.name; }, type: 'string' },
+        { key: function(d) { return d.type; }, type: 'string' },
+        { key: function(d) { return d.status; }, type: 'string' },
+        { key: function(d) { return d.firmware_version; }, type: 'string' },
+        { key: function(d) { return d.last_seen; }, type: 'date' }
+      ]);
+    }
+
+    function renderDevices(devices) {
+      var tbody = document.getElementById('device-table');
+      if (devices.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">' +
+          '<div class="empty-icon-circle">' + ICONS.emptyBox + '</div>' +
+          '<h3>No devices found</h3><p>Try adjusting your filters</p></td></tr>';
+        return;
+      }
+      tbody.innerHTML = devices.map(function(d) {
+        return '<tr onclick="window.location.href=\'/dashboard/device-detail.html?id=' + encodeURIComponent(d.id) + '\'">' +
+          '<td><strong>' + escapeHtml(d.id) + '</strong></td>' +
+          '<td>' + escapeHtml(d.name) + '</td>' +
+          '<td><span class="badge badge-muted">' + escapeHtml(d.type) + '</span></td>' +
+          '<td>' + statusBadge(d.status) + '</td>' +
+          '<td class="text-mono">' + escapeHtml(d.firmware_version || '-') + '</td>' +
+          '<td>' + formatDate(d.last_seen) + '</td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    function applyFilters() {
+      var typeVal = document.getElementById('filter-type').value;
+      var statusVal = document.getElementById('filter-status').value;
+      var searchVal = document.getElementById('search-input').value.trim().toLowerCase();
+
+      var filtered = allDevices.filter(function(d) {
+        if (typeVal && d.type !== typeVal) return false;
+        if (statusVal && d.status !== statusVal) return false;
+        if (searchVal) {
+          var match = (d.id || '').toLowerCase().indexOf(searchVal) !== -1 ||
+                      (d.name || '').toLowerCase().indexOf(searchVal) !== -1 ||
+                      (d.type || '').toLowerCase().indexOf(searchVal) !== -1;
+          if (!match) return false;
+        }
+        return true;
+      });
+      renderDevices(filtered);
+    }
+
+    document.getElementById('filter-type').addEventListener('change', applyFilters);
+    document.getElementById('filter-status').addEventListener('change', applyFilters);
+
+    // Debounced search
+    var searchTimer;
+    document.getElementById('search-input').addEventListener('input', function() {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(applyFilters, 250);
+    });
+
+    loadDevices();
+  </script>
+</body>
+</html>

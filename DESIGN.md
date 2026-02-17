@@ -230,6 +230,22 @@ The backend exposes a RESTful API via Express. `createApp(dbPath?)` returns an E
 | `/api/dashboard/firmware`               | GET    | viewer+   | Firmware status summary         |
 | `/api/dashboard/logs`                   | GET    | viewer+   | Log upload history              |
 
+### 4.9 Web Admin Dashboard (`public/`)
+
+A multi-page web dashboard served by `express.static` at `/dashboard`. No build step — vanilla HTML/CSS/JS using `fetch()` to call the existing REST API.
+
+| Page | File | Purpose |
+|------|------|---------|
+| Login | `index.html` | JWT authentication, auto-redirect |
+| Overview | `overview.html` | Fleet stats: device/log/firmware counts |
+| Devices | `devices.html` | Device list with type/status filters |
+| Device Detail | `device-detail.html` | Single device metadata + recent logs |
+| Logs | `logs.html` | Log browser with device filter, pagination |
+| Firmware | `firmware.html` | Firmware list + upload form (admin/tech) |
+
+**Design**: Indigo (#6366f1) primary, slate grays, white cards with 12px radius — matches mobile app.
+**Auth**: JWT in localStorage, `Bearer` header on all API calls, auto-logout on 401.
+
 ---
 
 ## 5. Integration Test Coverage
@@ -240,6 +256,7 @@ The backend exposes a RESTful API via Express. `createApp(dbPath?)` returns an E
 | `mobile_cloud.test.ts`   | Log upload, firmware download, offline queue auto-retry     |
 | `firmware_e2e.test.ts`   | Full pipeline: cloud → mobile → drive; drive → mobile → cloud |
 | `failure_simulation.test.ts` | Network loss, corruption detection, service degradation  |
+| `corrupted_data_e2e.test.ts` | Hash tampering, zero-size files, malformed metadata, injection |
 
 ---
 

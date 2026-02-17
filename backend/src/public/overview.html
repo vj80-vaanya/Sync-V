@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sync-V - Fleet Overview</title>
+  <link rel="stylesheet" href="/dashboard/css/style.css">
+</head>
+<body>
+  <div id="nav-bar"></div>
+
+  <div class="page">
+    <h1 class="page-title">Fleet Overview</h1>
+    <p class="page-subtitle">Real-time status of your Sync-V deployment</p>
+
+    <div class="stats-grid" id="stats-grid"></div>
+
+    <div class="card" style="margin-bottom: 24px">
+      <div class="card-title">Device Types</div>
+      <div id="device-types"><span class="loading">Loading...</span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Firmware Packages</div>
+      <div id="firmware-summary"><span class="loading">Loading...</span></div>
+    </div>
+  </div>
+
+  <script src="/dashboard/js/auth.js"></script>
+  <script src="/dashboard/js/api.js"></script>
+  <script src="/dashboard/js/app.js"></script>
+  <script>
+    if (!AUTH.requireAuth()) throw new Error('Not authenticated');
+    renderNavBar('overview');
+
+    // Show skeleton loading for stat cards
+    document.getElementById('stats-grid').innerHTML = skeletonCards(4);
+
+    async function loadOverview() {
+      var overview = await apiGet('/api/dashboard/overview');
+      if (!overview) return;
+
+      document.getElementById('stats-grid').innerHTML =
+        '<div class="stat-card stat-border-indigo">' +
+          '<div class="stat-icon" style="background:var(--primary-50);color:var(--primary)">' + ICONS.totalDevices + '</div>' +
+          '<div class="stat-value">' + overview.totalDevices + '</div>' +
+          '<div class="stat-label">Total Devices</div>' +
+        '</div>' +
+        '<div class="stat-card stat-border-green">' +
+          '<div class="stat-icon" style="background:var(--success-bg);color:var(--success)">' + ICONS.online + '</div>' +
+          '<div class="stat-value" style="color:var(--success)">' + overview.onlineDevices + '</div>' +
+          '<div class="stat-label">Online</div>' +
+        '</div>' +
+        '<div class="stat-card stat-border-red">' +
+          '<div class="stat-icon" style="background:var(--danger-bg);color:var(--danger)">' + ICONS.offline + '</div>' +
+          '<div class="stat-value" style="color:var(--danger)">' + overview.offlineDevices + '</div>' +
+          '<div class="stat-label">Offline</div>' +
+        '</div>' +
+        '<div class="stat-card stat-border-blue">' +
+          '<div class="stat-icon" style="background:#eff6ff;color:#3b82f6">' + ICONS.logsTotal + '</div>' +
+          '<div class="stat-value" style="color:#3b82f6">' + overview.totalLogs + '</div>' +
+          '<div class="stat-label">Total Logs</div>' +
+        '</div>';
+
+      var typesEl = document.getElementById('device-types');
+      if (overview.deviceTypes.length === 0) {
+        typesEl.innerHTML = '<span style="color:var(--text-muted)">No devices registered</span>';
+      } else {
+        typesEl.innerHTML = overview.deviceTypes.map(function(t) {
+          return '<span class="badge badge-muted" style="margin-right:8px">' + escapeHtml(t) + '</span>';
+        }).join('');
+      }
+
+      var fwData = await apiGet('/api/dashboard/firmware');
+      if (!fwData) return;
+
+      var fwEl = document.getElementById('firmware-summary');
+      var entries = Object.entries(fwData.byDeviceType);
+      if (entries.length === 0) {
+        fwEl.innerHTML = '<span style="color:var(--text-muted)">No firmware uploaded</span>';
+      } else {
+        fwEl.innerHTML = '<strong>' + fwData.totalFirmwarePackages + ' packages</strong> &mdash; ' +
+          entries.map(function(e) { return escapeHtml(e[0]) + ': ' + e[1]; }).join(', ');
+      }
+    }
+
+    loadOverview();
+  </script>
+</body>
+</html>

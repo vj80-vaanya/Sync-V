@@ -1,8 +1,13 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
+import React, { useEffect, useState, useCallback } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, Dimensions } from 'react-native';
 import { NetworkService } from '../services/NetworkService';
 import { DriveCommService } from '../services/DriveCommService';
 import { NetworkState } from '../types/Network';
+import { COLORS } from '../theme/colors';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const CARD_GAP = 12;
+const CARD_WIDTH = (SCREEN_WIDTH - 40 - CARD_GAP) / 2;
 
 interface FleetStats {
   driveConnected: boolean;
@@ -19,20 +24,32 @@ interface DashboardProps {
 }
 
 const StatusBadge: React.FC<{ label: string; status: 'ok' | 'warn' | 'error' }> = ({ label, status }) => {
-  const colors = { ok: '#22c55e', warn: '#f59e0b', error: '#ef4444' };
+  const colorMap = { ok: COLORS.success, warn: COLORS.warning, error: COLORS.danger };
+  const bgMap = { ok: COLORS.successBg, warn: COLORS.warningBg, error: COLORS.dangerBg };
   return (
-    <View style={[styles.badge, { backgroundColor: colors[status] + '18', borderColor: colors[status] }]}>
-      <View style={[styles.badgeDot, { backgroundColor: colors[status] }]} />
-      <Text style={[styles.badgeText, { color: colors[status] }]}>{label}</Text>
+    <View style={[styles.badge, { backgroundColor: bgMap[status], borderColor: colorMap[status] }]}>
+      <View style={[styles.badgeDot, { backgroundColor: colorMap[status] }]} />
+      <Text style={[styles.badgeText, { color: colorMap[status] }]}>{label}</Text>
     </View>
   );
 };
 
-const QuickActionCard: React.FC<{ title: string; subtitle: string; icon: string; onPress: () => void }> = ({
-  title, subtitle, icon, onPress,
+const StatCard: React.FC<{ value: number; label: string; accent?: string }> = ({
+  value, label, accent = COLORS.primary,
 }) => (
-  <TouchableOpacity style={styles.actionCard} onPress={onPress} activeOpacity={0.7}>
-    <Text style={styles.actionIcon}>{icon}</Text>
+  <View style={[styles.statCard, { borderLeftColor: accent, borderLeftWidth: 3 }]}>
+    <Text style={[styles.statNumber, { color: accent }]}>{value}</Text>
+    <Text style={styles.statLabel}>{label}</Text>
+  </View>
+);
+
+const QuickActionCard: React.FC<{
+  title: string; subtitle: string; icon: string; onPress: () => void;
+}> = ({ title, subtitle, icon, onPress }) => (
+  <TouchableOpacity style={styles.actionCard} onPress={onPress} activeOpacity={0.6}>
+    <View style={styles.actionIconWrap}>
+      <Text style={styles.actionIcon}>{icon}</Text>
+    </View>
     <Text style={styles.actionTitle}>{title}</Text>
     <Text style={styles.actionSubtitle}>{subtitle}</Text>
   </TouchableOpacity>
@@ -54,7 +71,7 @@ export const DashboardScreen: React.FC<DashboardProps> = ({ networkService, driv
     return unsubscribe;
   }, [networkService]);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
       const connected = driveComm.isConnected();
@@ -74,38 +91,35 @@ export const DashboardScreen: React.FC<DashboardProps> = ({ networkService, driv
       // Connection lost during refresh
     }
     setRefreshing(false);
-  };
+  }, [driveComm, networkState.isCloudReachable]);
 
   return (
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor="#6366f1" />}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={COLORS.primary} />}
     >
-      <Text style={styles.header}>Sync-V Dashboard</Text>
-      <Text style={styles.subheader}>Industrial IoT Fleet Manager</Text>
+      {/* Header */}
+      <View style={styles.headerSection}>
+        <Text style={styles.header}>Sync-V</Text>
+        <Text style={styles.subheader}>Industrial IoT Fleet Manager</Text>
+      </View>
 
       {/* Connection Status */}
       <View style={styles.statusRow}>
         <StatusBadge label="Drive" status={stats.driveConnected ? 'ok' : 'error'} />
         <StatusBadge label="Cloud" status={stats.cloudReachable ? 'ok' : 'error'} />
-        <StatusBadge label={networkState.connectionType.toUpperCase()} status={networkState.isConnected ? 'ok' : 'warn'} />
+        <StatusBadge
+          label={networkState.connectionType.toUpperCase()}
+          status={networkState.isConnected ? 'ok' : 'warn'}
+        />
       </View>
 
       {/* Stats Cards */}
       <View style={styles.statsRow}>
-        <View style={styles.statCard}>
-          <Text style={styles.statNumber}>{stats.filesOnDrive}</Text>
-          <Text style={styles.statLabel}>Files on Drive</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statNumber}>{stats.pendingUploads}</Text>
-          <Text style={styles.statLabel}>Pending Uploads</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statNumber}>{stats.firmwareUpdates}</Text>
-          <Text style={styles.statLabel}>FW Updates</Text>
-        </View>
+        <StatCard value={stats.filesOnDrive} label="Files on Drive" accent={COLORS.primary} />
+        <StatCard value={stats.pendingUploads} label="Pending Uploads" accent={COLORS.warning} />
+        <StatCard value={stats.firmwareUpdates} label="FW Updates" accent={COLORS.success} />
       </View>
 
       {/* Quick Actions */}
@@ -143,28 +157,31 @@ export const DashboardScreen: React.FC<DashboardProps> = ({ networkService, driv
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: COLORS.bg,
   },
   content: {
-    padding: 20,
-    paddingTop: 48,
+    paddingHorizontal: 20,
+    paddingTop: 52,
+    paddingBottom: 32,
+  },
+  headerSection: {
+    marginBottom: 20,
   },
   header: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#0f172a',
-    letterSpacing: -0.5,
+    fontSize: 30,
+    fontWeight: '800',
+    color: COLORS.textDark,
+    letterSpacing: -0.8,
   },
   subheader: {
     fontSize: 14,
-    color: '#64748b',
+    color: COLORS.textLight,
     marginTop: 4,
-    marginBottom: 24,
   },
   statusRow: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 24,
+    marginBottom: 20,
   },
   badge: {
     flexDirection: 'row',
@@ -175,9 +192,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   badgeDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
     marginRight: 6,
   },
   badgeText: {
@@ -186,75 +203,79 @@ const styles = StyleSheet.create({
   },
   statsRow: {
     flexDirection: 'row',
-    gap: 12,
-    marginBottom: 32,
+    gap: CARD_GAP,
+    marginBottom: 28,
   },
   statCard: {
     flex: 1,
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
+    backgroundColor: COLORS.card,
+    borderRadius: 14,
     padding: 16,
     alignItems: 'center',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 3,
   },
   statNumber: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#6366f1',
+    fontSize: 30,
+    fontWeight: '800',
+    lineHeight: 36,
   },
   statLabel: {
     fontSize: 11,
-    color: '#94a3b8',
+    color: COLORS.textMuted,
     marginTop: 4,
     textAlign: 'center',
+    fontWeight: '500',
   },
   sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#334155',
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
     marginBottom: 12,
   },
   actionsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
+    gap: CARD_GAP,
   },
   actionCard: {
-    width: '47%',
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 16,
+    width: CARD_WIDTH,
+    backgroundColor: COLORS.card,
+    borderRadius: 14,
+    padding: 18,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  actionIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: COLORS.primaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
   },
   actionIcon: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#6366f1',
-    backgroundColor: '#eef2ff',
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    textAlign: 'center',
-    lineHeight: 36,
-    overflow: 'hidden',
-    marginBottom: 10,
+    fontSize: 18,
+    fontWeight: '800',
+    color: COLORS.primary,
   },
   actionTitle: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#1e293b',
+    color: COLORS.textDark,
   },
   actionSubtitle: {
     fontSize: 12,
-    color: '#94a3b8',
-    marginTop: 2,
+    color: COLORS.textMuted,
+    marginTop: 3,
   },
 });
