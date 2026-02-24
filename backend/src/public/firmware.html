@@ -4,7 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sync-V - Firmware</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/dashboard/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
   <div id="nav-bar"></div>
@@ -14,6 +18,11 @@
     <p class="page-subtitle">Firmware packages for your device fleet</p>
 
     <div class="stats-grid" id="fw-stats"></div>
+
+    <div class="chart-card" style="margin-bottom: 24px; max-width: 400px;">
+      <div class="chart-title">Firmware Distribution</div>
+      <div class="chart-wrap"><canvas id="chart-fw-distribution"></canvas></div>
+    </div>
 
     <!-- Upload form (admin/technician only) -->
     <div id="upload-section" style="display:none">
@@ -84,6 +93,11 @@
   <script>
     if (!AUTH.requireAuth()) throw new Error('Not authenticated');
     renderNavBar('firmware');
+    renderFooter();
+
+    var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    Chart.defaults.font.family = "'Inter', sans-serif";
+    Chart.defaults.color = isDark ? '#94a3b8' : '#64748b';
 
     // Show skeleton loading
     document.getElementById('fw-stats').innerHTML = skeletonCards(3);
@@ -118,6 +132,32 @@
           '</div>';
         });
         document.getElementById('fw-stats').innerHTML = statsHtml;
+        staggerCards('#fw-stats');
+
+        // Doughnut chart: firmware distribution by device type
+        if (entries.length > 0) {
+          var chartColors = ['#6366f1', '#818cf8', '#a5b4fc', '#c7d2fe', '#4f46e5', '#4338ca'];
+          new Chart(document.getElementById('chart-fw-distribution'), {
+            type: 'doughnut',
+            data: {
+              labels: entries.map(function(e) { return e[0]; }),
+              datasets: [{
+                data: entries.map(function(e) { return e[1]; }),
+                backgroundColor: entries.map(function(_, i) { return chartColors[i % chartColors.length]; }),
+                borderWidth: 0,
+                hoverOffset: 8
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              cutout: '60%',
+              plugins: {
+                legend: { position: 'bottom', labels: { padding: 16, usePointStyle: true, pointStyleWidth: 10 } }
+              }
+            }
+          });
+        }
       }
 
       renderFirmware(allFirmware);
@@ -154,6 +194,7 @@
           '<td>' + escapeHtml(fw.description || '-') + '</td>' +
         '</tr>';
       }).join('');
+      staggerRows('fw-table');
     }
 
     document.getElementById('upload-form').addEventListener('submit', async function(e) {

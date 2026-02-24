@@ -4,7 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sync-V - Fleet Overview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/dashboard/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
   <div id="nav-bar"></div>
@@ -14,6 +18,21 @@
     <p class="page-subtitle">Real-time status of your Sync-V deployment</p>
 
     <div class="stats-grid" id="stats-grid"></div>
+
+    <div class="chart-grid">
+      <div class="chart-card">
+        <div class="chart-title">Device Status</div>
+        <div class="chart-wrap"><canvas id="chart-device-status"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Firmware by Device Type</div>
+        <div class="chart-wrap"><canvas id="chart-firmware-types"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Log Upload Activity</div>
+        <div class="chart-wrap"><canvas id="chart-log-activity"></canvas></div>
+      </div>
+    </div>
 
     <div class="card" style="margin-bottom: 24px">
       <div class="card-title">Device Types</div>
@@ -32,36 +51,77 @@
   <script>
     if (!AUTH.requireAuth()) throw new Error('Not authenticated');
     renderNavBar('overview');
+    renderFooter();
 
     // Show skeleton loading for stat cards
     document.getElementById('stats-grid').innerHTML = skeletonCards(4);
+
+    // Chart.js global defaults
+    var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    Chart.defaults.font.family = "'Inter', sans-serif";
+    Chart.defaults.color = isDark ? '#94a3b8' : '#64748b';
+    var gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)';
+    var pointBorder = isDark ? '#141620' : '#fff';
 
     async function loadOverview() {
       var overview = await apiGet('/api/dashboard/overview');
       if (!overview) return;
 
+      // Stat cards with animated counters
       document.getElementById('stats-grid').innerHTML =
         '<div class="stat-card stat-border-indigo">' +
           '<div class="stat-icon" style="background:var(--primary-50);color:var(--primary)">' + ICONS.totalDevices + '</div>' +
-          '<div class="stat-value">' + overview.totalDevices + '</div>' +
+          '<div class="stat-value" id="counter-total">' + overview.totalDevices + '</div>' +
           '<div class="stat-label">Total Devices</div>' +
         '</div>' +
         '<div class="stat-card stat-border-green">' +
           '<div class="stat-icon" style="background:var(--success-bg);color:var(--success)">' + ICONS.online + '</div>' +
-          '<div class="stat-value" style="color:var(--success)">' + overview.onlineDevices + '</div>' +
+          '<div class="stat-value" style="color:var(--success)" id="counter-online">' + overview.onlineDevices + '</div>' +
           '<div class="stat-label">Online</div>' +
         '</div>' +
         '<div class="stat-card stat-border-red">' +
           '<div class="stat-icon" style="background:var(--danger-bg);color:var(--danger)">' + ICONS.offline + '</div>' +
-          '<div class="stat-value" style="color:var(--danger)">' + overview.offlineDevices + '</div>' +
+          '<div class="stat-value" style="color:var(--danger)" id="counter-offline">' + overview.offlineDevices + '</div>' +
           '<div class="stat-label">Offline</div>' +
         '</div>' +
         '<div class="stat-card stat-border-blue">' +
           '<div class="stat-icon" style="background:#eff6ff;color:#3b82f6">' + ICONS.logsTotal + '</div>' +
-          '<div class="stat-value" style="color:#3b82f6">' + overview.totalLogs + '</div>' +
+          '<div class="stat-value" style="color:#3b82f6" id="counter-logs">' + overview.totalLogs + '</div>' +
           '<div class="stat-label">Total Logs</div>' +
         '</div>';
 
+      staggerCards('#stats-grid');
+
+      // Animate counters
+      animateCounter(document.getElementById('counter-total'), overview.totalDevices);
+      animateCounter(document.getElementById('counter-online'), overview.onlineDevices);
+      animateCounter(document.getElementById('counter-offline'), overview.offlineDevices);
+      animateCounter(document.getElementById('counter-logs'), overview.totalLogs, 1500);
+
+      // --- Doughnut chart: Device Status ---
+      var unknownCount = Math.max(0, overview.totalDevices - overview.onlineDevices - overview.offlineDevices);
+      new Chart(document.getElementById('chart-device-status'), {
+        type: 'doughnut',
+        data: {
+          labels: ['Online', 'Offline', 'Unknown'],
+          datasets: [{
+            data: [overview.onlineDevices, overview.offlineDevices, unknownCount],
+            backgroundColor: ['#22c55e', '#ef4444', '#94a3b8'],
+            borderWidth: 0,
+            hoverOffset: 8
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '65%',
+          plugins: {
+            legend: { position: 'bottom', labels: { padding: 16, usePointStyle: true, pointStyleWidth: 10 } }
+          }
+        }
+      });
+
+      // Device types badges
       var typesEl = document.getElementById('device-types');
       if (overview.deviceTypes.length === 0) {
         typesEl.innerHTML = '<span style="color:var(--text-muted)">No devices registered</span>';
@@ -71,16 +131,93 @@
         }).join('');
       }
 
+      // --- Load firmware data for bar chart ---
       var fwData = await apiGet('/api/dashboard/firmware');
-      if (!fwData) return;
+      if (fwData) {
+        var fwEl = document.getElementById('firmware-summary');
+        var entries = Object.entries(fwData.byDeviceType);
+        if (entries.length === 0) {
+          fwEl.innerHTML = '<span style="color:var(--text-muted)">No firmware uploaded</span>';
+        } else {
+          fwEl.innerHTML = '<strong>' + fwData.totalFirmwarePackages + ' packages</strong> &mdash; ' +
+            entries.map(function(e) { return escapeHtml(e[0]) + ': ' + e[1]; }).join(', ');
 
-      var fwEl = document.getElementById('firmware-summary');
-      var entries = Object.entries(fwData.byDeviceType);
-      if (entries.length === 0) {
-        fwEl.innerHTML = '<span style="color:var(--text-muted)">No firmware uploaded</span>';
-      } else {
-        fwEl.innerHTML = '<strong>' + fwData.totalFirmwarePackages + ' packages</strong> &mdash; ' +
-          entries.map(function(e) { return escapeHtml(e[0]) + ': ' + e[1]; }).join(', ');
+          // Bar chart: firmware by type
+          new Chart(document.getElementById('chart-firmware-types'), {
+            type: 'bar',
+            data: {
+              labels: entries.map(function(e) { return e[0]; }),
+              datasets: [{
+                label: 'Packages',
+                data: entries.map(function(e) { return e[1]; }),
+                backgroundColor: 'rgba(99,102,241,0.8)',
+                borderRadius: 8,
+                borderSkipped: false,
+                barThickness: 40
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { display: false }
+              },
+              scales: {
+                y: { beginAtZero: true, ticks: { stepSize: 1 }, grid: { color: gridColor } },
+                x: { grid: { display: false } }
+              }
+            }
+          });
+        }
+      }
+
+      // --- Load logs for area chart ---
+      var logsData = await apiGet('/api/dashboard/logs');
+      if (logsData && logsData.length > 0) {
+        // Bucket logs by day
+        var buckets = {};
+        logsData.forEach(function(log) {
+          var day = log.uploaded_at ? new Date(log.uploaded_at).toLocaleDateString() : 'Unknown';
+          buckets[day] = (buckets[day] || 0) + 1;
+        });
+        var dayLabels = Object.keys(buckets);
+        var dayCounts = Object.values(buckets);
+
+        var logCtx = document.getElementById('chart-log-activity').getContext('2d');
+        var gradient = logCtx.createLinearGradient(0, 0, 0, 280);
+        gradient.addColorStop(0, 'rgba(99,102,241,0.3)');
+        gradient.addColorStop(1, 'rgba(99,102,241,0.02)');
+
+        new Chart(logCtx, {
+          type: 'line',
+          data: {
+            labels: dayLabels,
+            datasets: [{
+              label: 'Logs Uploaded',
+              data: dayCounts,
+              fill: true,
+              backgroundColor: gradient,
+              borderColor: '#6366f1',
+              borderWidth: 2.5,
+              tension: 0.4,
+              pointRadius: 4,
+              pointBackgroundColor: '#6366f1',
+              pointBorderColor: pointBorder,
+              pointBorderWidth: 2
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false }
+            },
+            scales: {
+              y: { beginAtZero: true, ticks: { stepSize: 1 }, grid: { color: gridColor } },
+              x: { grid: { display: false } }
+            }
+          }
+        });
       }
     }
 

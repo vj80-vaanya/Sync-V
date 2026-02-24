@@ -59,7 +59,7 @@ describe('Backend API Routes', () => {
     path: string,
     body?: any,
     token?: string,
-  ): Promise<{ status: number; body: any }> {
+  ): Promise<{ status: number; body: any; headers: any }> {
     return new Promise((resolve) => {
       const http = require('http');
       const server = app.listen(0, () => {
@@ -78,14 +78,20 @@ describe('Backend API Routes', () => {
         }
 
         const req = http.request(options, (res: any) => {
-          let data = '';
-          res.on('data', (chunk: string) => (data += chunk));
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk: Buffer) => chunks.push(chunk));
           res.on('end', () => {
             server.close();
+            const data = Buffer.concat(chunks);
+            const contentType = res.headers['content-type'] || '';
             try {
-              resolve({ status: res.statusCode, body: JSON.parse(data) });
+              if (contentType.includes('json')) {
+                resolve({ status: res.statusCode, body: JSON.parse(data.toString()), headers: res.headers });
+              } else {
+                resolve({ status: res.statusCode, body: data.toString(), headers: res.headers });
+              }
             } catch {
-              resolve({ status: res.statusCode, body: data });
+              resolve({ status: res.statusCode, body: data.toString(), headers: res.headers });
             }
           });
         });
@@ -251,7 +257,9 @@ describe('Backend API Routes', () => {
           filename: 'sensor_jan.csv',
           size: 4096,
           checksum: validChecksum,
-          rawData: 'encrypted-data-here',
+          rawData: 'timestamp,temp,pressure\n1000,65.2,42.5',
+          vendor: 'Siemens',
+          format: 'csv',
           metadata: { sensor_type: 'temperature' },
         },
         adminToken,
@@ -312,10 +320,81 @@ describe('Backend API Routes', () => {
       expect(res.status).toBe(200);
       expect(res.body.valid).toBe(true);
     });
+
+    it('should get full log by ID with raw_data', async () => {
+      const logsRes = await makeRequest('GET', '/api/logs', undefined, viewerToken);
+      const logId = logsRes.body[0].id;
+
+      const res = await makeRequest('GET', `/api/logs/${logId}`, undefined, viewerToken);
+      expect(res.status).toBe(200);
+      expect(res.body.id).toBe(logId);
+      expect(res.body.raw_data).toBe('timestamp,temp,pressure\n1000,65.2,42.5');
+      expect(res.body.vendor).toBe('Siemens');
+      expect(res.body.format).toBe('csv');
+    });
+
+    it('should return 404 for nonexistent log', async () => {
+      const res = await makeRequest('GET', '/api/logs/nonexistent-id', undefined, viewerToken);
+      expect(res.status).toBe(404);
+    });
+
+    it('should download raw content', async () => {
+      const logsRes = await makeRequest('GET', '/api/logs', undefined, viewerToken);
+      const logId = logsRes.body[0].id;
+
+      const res = await makeRequest('GET', `/api/logs/${logId}/raw`, undefined, viewerToken);
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toContain('text/csv');
+      expect(res.headers['content-disposition']).toContain('sensor_jan.csv');
+      expect(res.body).toContain('timestamp,temp,pressure');
+    });
+
+    it('should return 404 for raw download of nonexistent log', async () => {
+      const res = await makeRequest('GET', '/api/logs/nonexistent-id/raw', undefined, viewerToken);
+      expect(res.status).toBe(404);
+    });
+
+    it('should get filters', async () => {
+      const res = await makeRequest('GET', '/api/logs/filters', undefined, viewerToken);
+      expect(res.status).toBe(200);
+      expect(res.body.vendors).toContain('Siemens');
+      expect(res.body.formats).toContain('csv');
+    });
+
+    it('list endpoint should not include raw_data', async () => {
+      const res = await makeRequest('GET', '/api/logs', undefined, viewerToken);
+      expect(res.status).toBe(200);
+      expect(res.body.length).toBeGreaterThan(0);
+      expect(res.body[0].raw_data).toBeUndefined();
+      // But should include vendor and format
+      expect(res.body[0].vendor).toBeDefined();
+      expect(res.body[0].format).toBeDefined();
+    });
+
+    it('should accept log without vendor/format (backward compatible)', async () => {
+      const res = await makeRequest(
+        'POST',
+        '/api/logs',
+        {
+          deviceId: 'PUMP-001',
+          filename: 'legacy.log',
+          size: 50,
+          checksum: 'b'.repeat(64),
+          rawData: 'legacy data',
+        },
+        adminToken,
+      );
+      expect(res.status).toBe(201);
+
+      // Verify defaults
+      const logRes = await makeRequest('GET', `/api/logs/${res.body.logId}`, undefined, viewerToken);
+      expect(logRes.body.vendor).toBe('unknown');
+      expect(logRes.body.format).toBe('text');
+    });
   });
 
   describe('Firmware Routes', () => {
-    const validSha = 'b'.repeat(64);
+    const validSha = 'c'.repeat(64);
 
     it('should list firmware (empty initially)', async () => {
       const res = await makeRequest('GET', '/api/firmware', undefined, viewerToken);
@@ -350,7 +429,7 @@ describe('Backend API Routes', () => {
           deviceType: 'typeA',
           filename: 'fw_v2.1.bin',
           size: 10240,
-          sha256: 'c'.repeat(64),
+          sha256: 'd'.repeat(64),
           description: 'test',
         },
         viewerToken,
@@ -395,7 +474,7 @@ describe('Backend API Routes', () => {
       const res = await makeRequest('GET', '/api/dashboard/overview', undefined, viewerToken);
       expect(res.status).toBe(200);
       expect(res.body.totalDevices).toBe(1);
-      expect(res.body.totalLogs).toBe(1);
+      expect(res.body.totalLogs).toBe(2);
     });
 
     it('should get device detail', async () => {
@@ -407,7 +486,7 @@ describe('Backend API Routes', () => {
       );
       expect(res.status).toBe(200);
       expect(res.body.device.id).toBe('PUMP-001');
-      expect(res.body.logCount).toBe(1);
+      expect(res.body.logCount).toBe(2);
     });
 
     it('should return 404 for unknown device detail', async () => {
@@ -429,7 +508,7 @@ describe('Backend API Routes', () => {
     it('should get log history', async () => {
       const res = await makeRequest('GET', '/api/dashboard/logs', undefined, viewerToken);
       expect(res.status).toBe(200);
-      expect(res.body.length).toBe(1);
+      expect(res.body.length).toBe(2);
     });
   });
 });

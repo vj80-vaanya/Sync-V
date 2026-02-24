@@ -25,6 +25,21 @@ describe('Database Schema', () => {
     db.close();
   });
 
+  it('logs table has new vendor/format/raw_data columns', () => {
+    const db = createDatabase();
+    const columns = db.pragma('table_info(logs)') as any[];
+    const colNames = columns.map((c: any) => c.name);
+
+    expect(colNames).toContain('raw_data');
+    expect(colNames).toContain('vendor');
+    expect(colNames).toContain('format');
+    expect(colNames).toContain('id');
+    expect(colNames).toContain('device_id');
+    expect(colNames).toContain('filename');
+    expect(colNames).toContain('checksum');
+    db.close();
+  });
+
   it('logs table enforces foreign key to devices', () => {
     const db = createDatabase();
     expect(() => {
@@ -69,6 +84,21 @@ describe('Database Schema', () => {
     const db = createDatabase();
     const fk = db.pragma('foreign_keys', { simple: true });
     expect(fk).toBe(1);
+    db.close();
+  });
+
+  it('new columns have correct defaults', () => {
+    const db = createDatabase();
+    // Insert a device first (FK constraint)
+    db.prepare("INSERT INTO devices (id, name, type) VALUES (?,?,?)").run('D1', 'Dev', 'typeA');
+    // Insert a log with only required fields
+    db.prepare("INSERT INTO logs (id, device_id, filename, size, checksum) VALUES (?,?,?,?,?)").run(
+      'L1', 'D1', 'test.log', 100, 'a'.repeat(64)
+    );
+    const row = db.prepare("SELECT raw_data, vendor, format FROM logs WHERE id = ?").get('L1') as any;
+    expect(row.raw_data).toBe('');
+    expect(row.vendor).toBe('unknown');
+    expect(row.format).toBe('text');
     db.close();
   });
 });

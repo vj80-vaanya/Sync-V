@@ -26,6 +26,9 @@ export function createDatabase(dbPath?: string): Database.Database {
       size INTEGER NOT NULL DEFAULT 0,
       checksum TEXT NOT NULL,
       raw_path TEXT DEFAULT '',
+      raw_data TEXT DEFAULT '',
+      vendor TEXT DEFAULT 'unknown',
+      format TEXT DEFAULT 'text',
       metadata TEXT DEFAULT '{}',
       uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (device_id) REFERENCES devices(id)
@@ -51,6 +54,19 @@ export function createDatabase(dbPath?: string): Database.Database {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+
+  // Migration: add new columns to existing logs tables
+  const logCols = db.pragma('table_info(logs)') as any[];
+  const colNames = logCols.map((c: any) => c.name);
+  if (!colNames.includes('raw_data')) {
+    db.exec("ALTER TABLE logs ADD COLUMN raw_data TEXT DEFAULT ''");
+  }
+  if (!colNames.includes('vendor')) {
+    db.exec("ALTER TABLE logs ADD COLUMN vendor TEXT DEFAULT 'unknown'");
+  }
+  if (!colNames.includes('format')) {
+    db.exec("ALTER TABLE logs ADD COLUMN format TEXT DEFAULT 'text'");
+  }
 
   return db;
 }

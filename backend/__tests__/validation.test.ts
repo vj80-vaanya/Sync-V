@@ -1,4 +1,4 @@
-import { isValidSha256, isValidDeviceId, isValidFilename } from '../src/utils/validation';
+import { isValidSha256, isValidDeviceId, isValidFilename, isValidVendor, isValidLogFormat } from '../src/utils/validation';
 
 describe('Validation Utilities', () => {
   describe('isValidSha256', () => {
@@ -86,6 +86,52 @@ describe('Validation Utilities', () => {
 
     it('should reject drive letters', () => {
       expect(isValidFilename('C:file.txt')).toBe(false);
+    });
+  });
+
+  describe('isValidVendor', () => {
+    it('should accept valid vendor names', () => {
+      expect(isValidVendor('Siemens')).toBe(true);
+      expect(isValidVendor('ABB')).toBe(true);
+      expect(isValidVendor('Schneider Electric')).toBe(true);
+      expect(isValidVendor('Honeywell-Process')).toBe(true);
+      expect(isValidVendor('vendor.v2')).toBe(true);
+    });
+
+    it('should reject empty vendor', () => {
+      expect(isValidVendor('')).toBe(false);
+    });
+
+    it('should reject vendor exceeding 128 chars', () => {
+      expect(isValidVendor('a'.repeat(129))).toBe(false);
+    });
+
+    it('should accept vendor at max length', () => {
+      expect(isValidVendor('a'.repeat(128))).toBe(true);
+    });
+
+    it('should reject vendor with special characters', () => {
+      expect(isValidVendor('vendor@evil')).toBe(false);
+      expect(isValidVendor('vendor<script>')).toBe(false);
+      expect(isValidVendor('vendor;drop')).toBe(false);
+    });
+  });
+
+  describe('isValidLogFormat', () => {
+    it('should accept all valid formats', () => {
+      expect(isValidLogFormat('text')).toBe(true);
+      expect(isValidLogFormat('json')).toBe(true);
+      expect(isValidLogFormat('csv')).toBe(true);
+      expect(isValidLogFormat('syslog')).toBe(true);
+      expect(isValidLogFormat('xml')).toBe(true);
+      expect(isValidLogFormat('binary')).toBe(true);
+    });
+
+    it('should reject invalid formats', () => {
+      expect(isValidLogFormat('pdf')).toBe(false);
+      expect(isValidLogFormat('html')).toBe(false);
+      expect(isValidLogFormat('')).toBe(false);
+      expect(isValidLogFormat('TEXT')).toBe(false);
     });
   });
 });

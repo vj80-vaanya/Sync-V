@@ -4,15 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sync-V - Login</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/dashboard/css/style.css">
 </head>
 <body>
   <div class="login-wrapper">
+    <button class="theme-toggle login-theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme" id="login-theme-btn"></button>
     <div class="login-card">
       <div class="login-brand">
-        <div class="login-logo">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-        </div>
+        <div class="login-logo" id="login-logo"></div>
         <h1>Sync-V</h1>
         <p>Industrial IoT Fleet Management</p>
       </div>
@@ -34,6 +36,16 @@
   <script src="/dashboard/js/auth.js"></script>
   <script src="/dashboard/js/app.js"></script>
   <script>
+    // Insert brand logo into login page
+    document.getElementById('login-logo').innerHTML = '<span class="logo-icon logo-icon-login">' + BRAND_LOGO + '</span>';
+
+    // Init theme toggle on login page
+    var loginTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+    updateThemeButtons(loginTheme);
+
+    // Add footer
+    renderFooter();
+
     // Auto-redirect if already logged in
     if (AUTH.isLoggedIn()) {
       window.location.href = '/dashboard/overview.html';

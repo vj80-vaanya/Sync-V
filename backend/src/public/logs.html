@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sync-V - Logs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/dashboard/css/style.css">
 </head>
 <body>
@@ -18,8 +21,12 @@
         <span class="search-icon"></span>
         <input type="text" id="filter-device" placeholder="Filter by Device ID...">
       </div>
+      <select id="filter-vendor"><option value="">All Vendors</option></select>
+      <select id="filter-format"><option value="">All Formats</option></select>
       <button class="btn btn-secondary" onclick="filterLogs()">Filter</button>
       <button class="btn btn-ghost" onclick="clearFilter()">Clear</button>
+      <div style="flex:1"></div>
+      <button class="btn btn-secondary" id="export-csv-btn" onclick="exportLogsAsCsv(allLogs)"><span id="export-icon"></span> Export CSV</button>
     </div>
 
     <div class="card">
@@ -30,9 +37,11 @@
               <th>Log ID</th>
               <th>Device</th>
               <th>Filename</th>
+              <th>Vendor</th>
+              <th>Format</th>
               <th>Size</th>
-              <th>Checksum</th>
               <th>Uploaded</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody id="logs-table"></tbody>
@@ -42,22 +51,65 @@
     </div>
   </div>
 
+  <!-- Preview Modal -->
+  <div id="log-preview-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closePreviewModal()">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modal-title">Log Preview</h3>
+        <button class="modal-close" onclick="closePreviewModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="margin-bottom:12px">
+          <span id="modal-vendor"></span>
+          <span id="modal-format" style="margin-left:6px"></span>
+          <span id="modal-size" style="margin-left:12px;font-size:13px;color:var(--text-muted)"></span>
+        </div>
+        <pre class="log-content-pre" id="modal-content">Loading...</pre>
+      </div>
+      <div class="modal-footer">
+        <a id="modal-view-full" class="btn btn-secondary btn-sm" href="#">View Full</a>
+        <button id="modal-download-btn" class="btn btn-outline btn-sm" onclick="">Download</button>
+        <button class="btn btn-ghost btn-sm" onclick="closePreviewModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/dashboard/js/auth.js"></script>
   <script src="/dashboard/js/api.js"></script>
   <script src="/dashboard/js/app.js"></script>
   <script>
     if (!AUTH.requireAuth()) throw new Error('Not authenticated');
     renderNavBar('logs');
+    renderFooter();
 
-    // Insert search icon
+    // Insert icons
     document.querySelector('.search-icon').innerHTML = ICONS.search;
+    document.getElementById('export-icon').innerHTML = ICONS.exportCsv;
 
     // Show skeleton loading
-    document.getElementById('logs-table').innerHTML = skeletonRows(5, 6);
+    document.getElementById('logs-table').innerHTML = skeletonRows(5, 8);
 
     var allLogs = [];
     var currentPage = 1;
     var pageSize = 50;
+
+    // Load filter dropdowns
+    async function loadFilters() {
+      var data = await apiGet('/api/logs/filters');
+      if (!data) return;
+      var vendorSel = document.getElementById('filter-vendor');
+      var formatSel = document.getElementById('filter-format');
+      (data.vendors || []).forEach(function(v) {
+        var opt = document.createElement('option');
+        opt.value = v; opt.textContent = v;
+        vendorSel.appendChild(opt);
+      });
+      (data.formats || []).forEach(function(f) {
+        var opt = document.createElement('option');
+        opt.value = f; opt.textContent = f;
+        formatSel.appendChild(opt);
+      });
+    }
 
     async function loadLogs() {
       allLogs = await apiGet('/api/dashboard/logs') || [];
@@ -73,10 +125,23 @@
         { key: function(l) { return l.id; }, type: 'string' },
         { key: function(l) { return l.device_id; }, type: 'string' },
         { key: function(l) { return l.filename; }, type: 'string' },
+        { key: function(l) { return l.vendor; }, type: 'string' },
+        { key: function(l) { return l.format; }, type: 'string' },
         { key: function(l) { return l.size; }, type: 'number' },
-        null, // checksum — not sortable
-        { key: function(l) { return l.uploaded_at; }, type: 'date' }
+        { key: function(l) { return l.uploaded_at; }, type: 'date' },
+        null // actions — not sortable
       ]);
+    }
+
+    function getFilteredLogs() {
+      var deviceFilter = document.getElementById('filter-device').value.trim();
+      var vendorFilter = document.getElementById('filter-vendor').value;
+      var formatFilter = document.getElementById('filter-format').value;
+      var logs = allLogs;
+      if (deviceFilter) logs = logs.filter(function(l) { return l.device_id === deviceFilter; });
+      if (vendorFilter) logs = logs.filter(function(l) { return l.vendor === vendorFilter; });
+      if (formatFilter) logs = logs.filter(function(l) { return l.format === formatFilter; });
+      return logs;
     }
 
     function renderLogs(logs) {
@@ -86,24 +151,32 @@
       var end = Math.min(start + pageSize, total);
       var shown = logs.slice(start, end);
 
+      window._currentLogs = shown;
+
       if (total === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">' +
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">' +
           '<div class="empty-icon-circle">' + ICONS.emptyBox + '</div>' +
           '<h3>No logs found</h3></td></tr>';
         document.getElementById('pagination').innerHTML = '';
         return;
       }
 
-      tbody.innerHTML = shown.map(function(log) {
-        return '<tr style="cursor:default">' +
+      tbody.innerHTML = shown.map(function(log, idx) {
+        return '<tr style="cursor:pointer" onclick="openPreviewModal(\'' + escapeHtml(log.id) + '\')">' +
           '<td class="text-mono"><span class="text-truncate">' + escapeHtml(log.id) + '</span></td>' +
-          '<td><a href="/dashboard/device-detail.html?id=' + encodeURIComponent(log.device_id) + '">' + escapeHtml(log.device_id) + '</a></td>' +
+          '<td><a href="/dashboard/device-detail.html?id=' + encodeURIComponent(log.device_id) + '" onclick="event.stopPropagation()">' + escapeHtml(log.device_id) + '</a></td>' +
           '<td>' + escapeHtml(log.filename) + '</td>' +
+          '<td>' + vendorBadge(log.vendor) + '</td>' +
+          '<td>' + formatBadge(log.format) + '</td>' +
           '<td>' + formatSize(log.size) + '</td>' +
-          '<td class="text-mono"><span class="text-truncate">' + escapeHtml(log.checksum) + '</span></td>' +
           '<td>' + formatDate(log.uploaded_at) + '</td>' +
+          '<td>' +
+            '<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();downloadLogRaw(\'' + escapeHtml(log.id) + '\',\'' + escapeHtml(log.filename) + '\')" title="Download raw">' + ICONS.download + '</button> ' +
+            '<a class="btn btn-outline btn-sm" href="/dashboard/log-viewer.html?id=' + encodeURIComponent(log.id) + '" onclick="event.stopPropagation()" title="View full">View</a>' +
+          '</td>' +
         '</tr>';
       }).join('');
+      staggerRows('logs-table');
 
       // Pagination bar
       var pag = document.getElementById('pagination');
@@ -118,37 +191,55 @@
     }
 
     function prevPage() {
-      if (currentPage > 1) { currentPage--; renderCurrentLogs(); }
+      if (currentPage > 1) { currentPage--; renderLogs(getFilteredLogs()); }
     }
 
     function nextPage() {
-      var deviceFilter = document.getElementById('filter-device').value.trim();
-      var logs = deviceFilter ? allLogs.filter(function(l) { return l.device_id === deviceFilter; }) : allLogs;
+      var logs = getFilteredLogs();
       var totalPages = Math.ceil(logs.length / pageSize);
-      if (currentPage < totalPages) { currentPage++; renderCurrentLogs(); }
+      if (currentPage < totalPages) { currentPage++; renderLogs(logs); }
     }
 
-    function renderCurrentLogs() {
-      var deviceFilter = document.getElementById('filter-device').value.trim();
-      var logs = deviceFilter ? allLogs.filter(function(l) { return l.device_id === deviceFilter; }) : allLogs;
-      renderLogs(logs);
-    }
-
-    async function filterLogs() {
-      var deviceId = document.getElementById('filter-device').value.trim();
+    function filterLogs() {
       currentPage = 1;
-      if (!deviceId) { renderLogs(allLogs); return; }
-
-      var logs = await apiGet('/api/logs/device/' + encodeURIComponent(deviceId));
-      if (logs) { renderLogs(logs); }
+      renderLogs(getFilteredLogs());
     }
 
     function clearFilter() {
       document.getElementById('filter-device').value = '';
+      document.getElementById('filter-vendor').value = '';
+      document.getElementById('filter-format').value = '';
       currentPage = 1;
       renderLogs(allLogs);
     }
 
+    // Preview modal
+    async function openPreviewModal(logId) {
+      var modal = document.getElementById('log-preview-modal');
+      modal.style.display = 'flex';
+      document.getElementById('modal-content').textContent = 'Loading...';
+
+      var log = await apiGet('/api/logs/' + encodeURIComponent(logId));
+      if (!log) { document.getElementById('modal-content').textContent = 'Failed to load.'; return; }
+
+      document.getElementById('modal-title').textContent = log.filename;
+      document.getElementById('modal-vendor').innerHTML = vendorBadge(log.vendor);
+      document.getElementById('modal-format').innerHTML = formatBadge(log.format);
+      document.getElementById('modal-size').textContent = formatSize(log.size);
+
+      var content = log.raw_data || '(no content)';
+      if (content.length > 5000) content = content.substring(0, 5000) + '\n\n... truncated (view full for complete content)';
+      document.getElementById('modal-content').textContent = content;
+
+      document.getElementById('modal-view-full').href = '/dashboard/log-viewer.html?id=' + encodeURIComponent(logId);
+      document.getElementById('modal-download-btn').onclick = function() { downloadLogRaw(logId, log.filename); };
+    }
+
+    function closePreviewModal() {
+      document.getElementById('log-preview-modal').style.display = 'none';
+    }
+
+    loadFilters();
     loadLogs();
   </script>
 </body>

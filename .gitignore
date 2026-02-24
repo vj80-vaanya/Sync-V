@@ -40,3 +40,13 @@ Makefile
 compile_commands.json
 Testing/
 _deps/
+
+# Google Play service account key
+google-service-account.json
+
+# Expo
+.expo/
+web-build/
+expo-env.d.ts
+.metro-health-check*
+*.tsbuildinfo

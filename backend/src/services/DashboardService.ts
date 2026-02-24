@@ -1,5 +1,5 @@
 import { DeviceModel, DeviceRecord } from '../models/Device';
-import { LogModel, LogRecord } from '../models/Log';
+import { LogModel, LogRecord, LogSummary } from '../models/Log';
 import { FirmwareModel } from '../models/Firmware';
 
 export interface FleetOverview {
@@ -13,7 +13,7 @@ export interface FleetOverview {
 export interface DeviceDetail {
   device: DeviceRecord;
   logCount: number;
-  recentLogs: LogRecord[];
+  recentLogs: LogSummary[];
 }
 
 export interface FirmwareStatusSummary {
@@ -38,7 +38,7 @@ export class DashboardService {
 
   getFleetOverview(): FleetOverview {
     const devices = this.deviceModel.getAll();
-    const logs = this.logModel.getAll();
+    const logs = this.logModel.getAllSummary();
 
     const typeSet = new Set(devices.map((d) => d.type));
 
@@ -55,7 +55,7 @@ export class DashboardService {
     const device = this.deviceModel.getById(deviceId);
     if (!device) return undefined;
 
-    const logs = this.logModel.getByDeviceId(deviceId);
+    const logs = this.logModel.getByDeviceIdSummary(deviceId);
 
     return {
       device,
@@ -78,7 +78,7 @@ export class DashboardService {
     };
   }
 
-  getLogUploadHistory(): LogRecord[] {
-    return this.logModel.getAll();
+  getLogUploadHistory(): LogSummary[] {
+    return this.logModel.getAllSummary();
   }
 }

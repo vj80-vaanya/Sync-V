@@ -1,0 +1,32 @@
+services:
+  cloud:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      DB_PATH: /data/syncv.db
+      JWT_SECRET: syncv-demo-secret-key
+      SEED_DEMO_DATA: "true"
+    volumes:
+      - cloud-data:/data
+    restart: unless-stopped
+
+  mobile:
+    build:
+      context: ./mobile
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  drive:
+    build:
+      context: ./drive
+      dockerfile: Dockerfile
+    restart: "no"
+
+volumes:
+  cloud-data:
