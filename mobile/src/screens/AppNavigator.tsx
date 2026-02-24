@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { DashboardScreen } from './Dashboard';
 import { DeviceListScreen } from './DeviceList';
@@ -9,6 +9,8 @@ import { NetworkService } from '../services/NetworkService';
 import { DriveCommService } from '../services/DriveCommService';
 import { LogsService } from '../services/LogsService';
 import { FirmwareService } from '../services/FirmwareService';
+import { CloudApiService } from '../services/CloudApiService';
+import { NetworkState } from '../types/Network';
 import { COLORS } from '../theme/colors';
 
 type ScreenName = 'Dashboard' | 'DeviceList' | 'LogsUpload' | 'FirmwareUpdate' | 'Settings';
@@ -27,14 +29,116 @@ const TABS: TabItem[] = [
   { key: 'Settings', label: 'Settings', icon: 'S' },
 ];
 
+const ConnectionStatusBar: React.FC<{ networkState: NetworkState; cloudLoggedIn: boolean }> = ({
+  networkState, cloudLoggedIn,
+}) => (
+  <View style={statusStyles.bar}>
+    <View style={statusStyles.indicator}>
+      <View style={[statusStyles.dot, {
+        backgroundColor: networkState.isDriveReachable ? COLORS.success : COLORS.danger,
+      }]} />
+      <Text style={statusStyles.label}>Drive</Text>
+    </View>
+    <View style={statusStyles.separator} />
+    <View style={statusStyles.indicator}>
+      <View style={[statusStyles.dot, {
+        backgroundColor: networkState.isCloudReachable ? COLORS.success : COLORS.danger,
+      }]} />
+      <Text style={statusStyles.label}>Cloud</Text>
+    </View>
+    {networkState.isCloudReachable && (
+      <>
+        <View style={statusStyles.separator} />
+        <View style={statusStyles.indicator}>
+          <View style={[statusStyles.dot, {
+            backgroundColor: cloudLoggedIn ? COLORS.success : COLORS.warning,
+          }]} />
+          <Text style={statusStyles.label}>{cloudLoggedIn ? 'Logged In' : 'Not Authed'}</Text>
+        </View>
+      </>
+    )}
+    <View style={{ flex: 1 }} />
+    <Text style={statusStyles.connType}>
+      {networkState.connectionType === 'none' ? 'Offline' : networkState.connectionType.toUpperCase()}
+    </Text>
+  </View>
+);
+
+const statusStyles = StyleSheet.create({
+  bar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    backgroundColor: COLORS.card,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  indicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  label: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: COLORS.textMuted,
+  },
+  separator: {
+    width: 1,
+    height: 12,
+    backgroundColor: COLORS.border,
+    marginHorizontal: 10,
+  },
+  connType: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: COLORS.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+});
+
 export const AppNavigator: React.FC = () => {
   const [currentScreen, setCurrentScreen] = useState<ScreenName>('Dashboard');
+  const [networkState, setNetworkState] = useState<NetworkState>({
+    isConnected: false, connectionType: 'none', isDriveReachable: false, isCloudReachable: false,
+  });
+  const [cloudLoggedIn, setCloudLoggedIn] = useState(false);
 
   // Service singletons
+  const cloudApi = useMemo(() => new CloudApiService(), []);
   const networkService = useMemo(() => new NetworkService(), []);
   const driveComm = useMemo(() => new DriveCommService(), []);
   const logsService = useMemo(() => new LogsService(), []);
   const firmwareService = useMemo(() => new FirmwareService(), []);
+
+  // Wire cloud API into services
+  useEffect(() => {
+    networkService.setCloudApi(cloudApi);
+    logsService.setCloudApi(cloudApi);
+    firmwareService.setCloudApi(cloudApi);
+
+    // Start monitoring cloud connectivity
+    networkService.startCloudMonitoring();
+
+    // Listen for network state changes
+    const unsubNetwork = networkService.onStateChange(setNetworkState);
+
+    // Listen for auth changes
+    const unsubAuth = cloudApi.onAuthChange(setCloudLoggedIn);
+
+    return () => {
+      networkService.stopCloudMonitoring();
+      unsubNetwork();
+      unsubAuth();
+    };
+  }, [cloudApi, networkService, logsService, firmwareService]);
 
   const navigateTo = (screen: string) => setCurrentScreen(screen as ScreenName);
   const navigateBack = () => setCurrentScreen('Dashboard');
@@ -46,6 +150,7 @@ export const AppNavigator: React.FC = () => {
           <DashboardScreen
             networkService={networkService}
             driveComm={driveComm}
+            logsService={logsService}
             onNavigate={navigateTo}
           />
         );
@@ -61,6 +166,7 @@ export const AppNavigator: React.FC = () => {
           <LogsUploadScreen
             logsService={logsService}
             driveComm={driveComm}
+            networkService={networkService}
             onNavigateBack={navigateBack}
           />
         );
@@ -68,6 +174,7 @@ export const AppNavigator: React.FC = () => {
         return (
           <FirmwareUpdateScreen
             firmwareService={firmwareService}
+            networkService={networkService}
             onNavigateBack={navigateBack}
           />
         );
@@ -75,6 +182,7 @@ export const AppNavigator: React.FC = () => {
         return (
           <SettingsScreen
             networkService={networkService}
+            cloudApi={cloudApi}
             onNavigateBack={navigateBack}
           />
         );
@@ -83,6 +191,9 @@ export const AppNavigator: React.FC = () => {
 
   return (
     <View style={styles.container}>
+      {/* Persistent Connection Status Bar */}
+      <ConnectionStatusBar networkState={networkState} cloudLoggedIn={cloudLoggedIn} />
+
       <View style={styles.screenWrap}>{renderScreen()}</View>
 
       {/* Bottom Tab Bar */}

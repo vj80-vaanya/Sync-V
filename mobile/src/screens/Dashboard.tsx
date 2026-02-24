@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, Dimensions } from 'react-native';
 import { NetworkService } from '../services/NetworkService';
 import { DriveCommService } from '../services/DriveCommService';
+import { LogsService } from '../services/LogsService';
 import { NetworkState } from '../types/Network';
 import { COLORS } from '../theme/colors';
 
@@ -20,19 +21,68 @@ interface FleetStats {
 interface DashboardProps {
   networkService: NetworkService;
   driveComm: DriveCommService;
+  logsService: LogsService;
   onNavigate: (screen: string) => void;
 }
 
-const StatusBadge: React.FC<{ label: string; status: 'ok' | 'warn' | 'error' }> = ({ label, status }) => {
-  const colorMap = { ok: COLORS.success, warn: COLORS.warning, error: COLORS.danger };
-  const bgMap = { ok: COLORS.successBg, warn: COLORS.warningBg, error: COLORS.dangerBg };
-  return (
-    <View style={[styles.badge, { backgroundColor: bgMap[status], borderColor: colorMap[status] }]}>
-      <View style={[styles.badgeDot, { backgroundColor: colorMap[status] }]} />
-      <Text style={[styles.badgeText, { color: colorMap[status] }]}>{label}</Text>
+const ConnectionCard: React.FC<{
+  label: string;
+  connected: boolean;
+  detail: string;
+}> = ({ label, connected, detail }) => (
+  <View style={[connStyles.card, { borderLeftColor: connected ? COLORS.success : COLORS.danger }]}>
+    <View style={connStyles.header}>
+      <View style={[connStyles.dot, { backgroundColor: connected ? COLORS.success : COLORS.danger }]} />
+      <Text style={connStyles.label}>{label}</Text>
     </View>
-  );
-};
+    <Text style={[connStyles.status, { color: connected ? COLORS.success : COLORS.danger }]}>
+      {connected ? 'Connected' : 'Disconnected'}
+    </Text>
+    <Text style={connStyles.detail}>{detail}</Text>
+  </View>
+);
+
+const connStyles = StyleSheet.create({
+  card: {
+    flex: 1,
+    backgroundColor: COLORS.card,
+    borderRadius: 14,
+    padding: 16,
+    borderLeftWidth: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  dot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 8,
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  status: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  detail: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+  },
+});
 
 const StatCard: React.FC<{ value: number; label: string; accent?: string }> = ({
   value, label, accent = COLORS.primary,
@@ -55,7 +105,9 @@ const QuickActionCard: React.FC<{
   </TouchableOpacity>
 );
 
-export const DashboardScreen: React.FC<DashboardProps> = ({ networkService, driveComm, onNavigate }) => {
+export const DashboardScreen: React.FC<DashboardProps> = ({
+  networkService, driveComm, logsService, onNavigate,
+}) => {
   const [stats, setStats] = useState<FleetStats>({
     driveConnected: false,
     cloudReachable: false,
@@ -80,18 +132,19 @@ export const DashboardScreen: React.FC<DashboardProps> = ({ networkService, driv
         const files = await driveComm.getFileList();
         fileCount = files.length;
       }
+      const pendingUploads = logsService.getUploadQueue().length;
       setStats({
         driveConnected: connected,
         cloudReachable: networkState.isCloudReachable,
         filesOnDrive: fileCount,
-        pendingUploads: 0,
+        pendingUploads,
         firmwareUpdates: 0,
       });
     } catch {
       // Connection lost during refresh
     }
     setRefreshing(false);
-  }, [driveComm, networkState.isCloudReachable]);
+  }, [driveComm, logsService, networkState.isCloudReachable]);
 
   return (
     <ScrollView
@@ -105,13 +158,17 @@ export const DashboardScreen: React.FC<DashboardProps> = ({ networkService, driv
         <Text style={styles.subheader}>Industrial IoT Fleet Manager</Text>
       </View>
 
-      {/* Connection Status */}
-      <View style={styles.statusRow}>
-        <StatusBadge label="Drive" status={stats.driveConnected ? 'ok' : 'error'} />
-        <StatusBadge label="Cloud" status={stats.cloudReachable ? 'ok' : 'error'} />
-        <StatusBadge
-          label={networkState.connectionType.toUpperCase()}
-          status={networkState.isConnected ? 'ok' : 'warn'}
+      {/* Dual Connection Cards */}
+      <View style={styles.connRow}>
+        <ConnectionCard
+          label="Drive"
+          connected={stats.driveConnected}
+          detail={stats.driveConnected ? `${stats.filesOnDrive} files` : 'WiFi not connected'}
+        />
+        <ConnectionCard
+          label="Cloud"
+          connected={networkState.isCloudReachable}
+          detail={networkState.isCloudReachable ? 'Railway backend' : 'No internet'}
         />
       </View>
 
@@ -161,7 +218,7 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: 20,
-    paddingTop: 52,
+    paddingTop: 24,
     paddingBottom: 32,
   },
   headerSection: {
@@ -178,28 +235,10 @@ const styles = StyleSheet.create({
     color: COLORS.textLight,
     marginTop: 4,
   },
-  statusRow: {
+  connRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: CARD_GAP,
     marginBottom: 20,
-  },
-  badge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-  },
-  badgeDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  badgeText: {
-    fontSize: 12,
-    fontWeight: '600',
   },
   statsRow: {
     flexDirection: 'row',

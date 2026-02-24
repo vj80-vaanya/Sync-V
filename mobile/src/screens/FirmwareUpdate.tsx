@@ -1,10 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl } from 'react-native';
 import { FirmwareService } from '../services/FirmwareService';
+import { NetworkService } from '../services/NetworkService';
 import { FirmwarePackage, FirmwareProgress } from '../types/Firmware';
+import { NetworkState } from '../types/Network';
+import { COLORS } from '../theme/colors';
 
 interface FirmwareUpdateProps {
   firmwareService: FirmwareService;
+  networkService: NetworkService;
   onNavigateBack: () => void;
 }
 
@@ -68,10 +72,15 @@ const FirmwareCard: React.FC<{
   </View>
 );
 
-export const FirmwareUpdateScreen: React.FC<FirmwareUpdateProps> = ({ firmwareService, onNavigateBack }) => {
+export const FirmwareUpdateScreen: React.FC<FirmwareUpdateProps> = ({ firmwareService, networkService, onNavigateBack }) => {
   const [available, setAvailable] = useState<FirmwarePackage[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [progressMap, setProgressMap] = useState<Record<string, FirmwareProgress>>({});
+  const [networkState, setNetworkState] = useState<NetworkState>(networkService.getNetworkState());
+
+  useEffect(() => {
+    return networkService.onStateChange(setNetworkState);
+  }, [networkService]);
 
   const checkUpdates = async () => {
     setRefreshing(true);
@@ -103,6 +112,15 @@ export const FirmwareUpdateScreen: React.FC<FirmwareUpdateProps> = ({ firmwareSe
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Firmware Updates</Text>
         <View style={styles.headerSpacer} />
+      </View>
+
+      <View style={styles.cloudStatus}>
+        <View style={[styles.cloudDot, {
+          backgroundColor: networkState.isCloudReachable ? COLORS.success : COLORS.danger,
+        }]} />
+        <Text style={styles.cloudStatusText}>
+          Cloud: {networkState.isCloudReachable ? 'Connected — will fetch from server' : 'Offline — using cached data'}
+        </Text>
       </View>
 
       <TouchableOpacity style={styles.checkButton} onPress={checkUpdates} activeOpacity={0.7}>
@@ -146,6 +164,11 @@ const styles = StyleSheet.create({
   backText: { fontSize: 16, color: '#6366f1', fontWeight: '500' },
   headerTitle: { fontSize: 18, fontWeight: '600', color: '#0f172a' },
   headerSpacer: { width: 60 },
+  cloudStatus: {
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 12, gap: 6,
+  },
+  cloudDot: { width: 8, height: 8, borderRadius: 4 },
+  cloudStatusText: { fontSize: 12, fontWeight: '600', color: '#94a3b8' },
   checkButton: {
     margin: 16, backgroundColor: '#6366f1', paddingVertical: 14, borderRadius: 10, alignItems: 'center',
   },

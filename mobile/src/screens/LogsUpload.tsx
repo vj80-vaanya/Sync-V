@@ -1,12 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Alert } from 'react-native';
 import { LogsService } from '../services/LogsService';
 import { DriveCommService } from '../services/DriveCommService';
+import { NetworkService } from '../services/NetworkService';
 import { LogFile, LogUploadStatus } from '../types/Log';
+import { NetworkState } from '../types/Network';
+import { COLORS } from '../theme/colors';
 
 interface LogsUploadProps {
   logsService: LogsService;
   driveComm: DriveCommService;
+  networkService: NetworkService;
   onNavigateBack: () => void;
 }
 
@@ -64,11 +68,16 @@ const LogItem: React.FC<{
   </View>
 );
 
-export const LogsUploadScreen: React.FC<LogsUploadProps> = ({ logsService, driveComm, onNavigateBack }) => {
+export const LogsUploadScreen: React.FC<LogsUploadProps> = ({ logsService, driveComm, networkService, onNavigateBack }) => {
   const [logs, setLogs] = useState<LogFile[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [statusMap, setStatusMap] = useState<Record<string, LogUploadStatus>>({});
+  const [networkState, setNetworkState] = useState<NetworkState>(networkService.getNetworkState());
   const queueCount = logsService.getUploadQueue().length;
+
+  useEffect(() => {
+    return networkService.onStateChange(setNetworkState);
+  }, [networkService]);
 
   const loadLogs = async () => {
     setRefreshing(true);
@@ -128,6 +137,16 @@ export const LogsUploadScreen: React.FC<LogsUploadProps> = ({ logsService, drive
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Log Upload</Text>
         <View style={styles.headerSpacer} />
+      </View>
+
+      {/* Cloud Status */}
+      <View style={styles.cloudStatus}>
+        <View style={[styles.cloudDot, {
+          backgroundColor: networkState.isCloudReachable ? COLORS.success : COLORS.danger,
+        }]} />
+        <Text style={styles.cloudStatusText}>
+          Cloud: {networkState.isCloudReachable ? 'Connected' : 'Offline'}
+        </Text>
       </View>
 
       {/* Action Bar */}
@@ -190,6 +209,24 @@ const styles = StyleSheet.create({
   backText: { fontSize: 16, color: '#6366f1', fontWeight: '500' },
   headerTitle: { fontSize: 18, fontWeight: '600', color: '#0f172a' },
   headerSpacer: { width: 60 },
+  cloudStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 4,
+    gap: 6,
+  },
+  cloudDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  cloudStatusText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#94a3b8',
+  },
   actionBar: {
     flexDirection: 'row',
     padding: 16,

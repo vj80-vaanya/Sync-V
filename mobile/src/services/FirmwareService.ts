@@ -1,4 +1,6 @@
 import { FirmwarePackage, FirmwareProgress } from '../types/Firmware';
+import { CloudApiService } from './CloudApiService';
+import { CLOUD_CONFIG } from '../config';
 import { createHash } from '../utils/hash';
 
 interface DownloadResult {
@@ -20,6 +22,11 @@ export class FirmwareService {
   private mockDriveConnected: boolean = false;
   private mockDownloadShouldFail: boolean = false;
   private progressCallbacks: ProgressCallback[] = [];
+  private cloudApi: CloudApiService | null = null;
+
+  setCloudApi(api: CloudApiService): void {
+    this.cloudApi = api;
+  }
 
   setMockAvailableFirmware(firmware: FirmwarePackage[]): void {
     this.mockAvailableFirmware = firmware;
@@ -42,6 +49,28 @@ export class FirmwareService {
   }
 
   async checkForUpdates(deviceType: string, currentVersion: string): Promise<FirmwarePackage[]> {
+    // Try real cloud API if available
+    if (this.cloudApi && this.cloudApi.isAuthenticated()) {
+      const result = await this.cloudApi.get<any[]>(CLOUD_CONFIG.firmwarePath);
+      if (result.ok && result.data) {
+        return result.data
+          .map((fw: any) => ({
+            id: fw.id,
+            version: fw.version,
+            deviceType: fw.device_type,
+            filename: fw.filename,
+            size: fw.size,
+            sha256: fw.sha256,
+            releaseDate: fw.release_date,
+            description: fw.description || '',
+          }))
+          .filter((fw: FirmwarePackage) =>
+            fw.deviceType === deviceType && fw.version !== currentVersion
+          );
+      }
+    }
+
+    // Mock fallback
     return this.mockAvailableFirmware.filter(
       (fw) => fw.deviceType === deviceType && fw.version !== currentVersion
     );
