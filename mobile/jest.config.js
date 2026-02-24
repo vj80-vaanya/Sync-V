@@ -9,6 +9,7 @@ module.exports = {
     '^@types/(.*)$': '<rootDir>/src/types/$1',
     '^@utils/(.*)$': '<rootDir>/src/utils/$1',
     '^@screens/(.*)$': '<rootDir>/src/screens/$1',
+    '^react-native-wifi-reborn$': '<rootDir>/__mocks__/react-native-wifi-reborn',
   },
   collectCoverageFrom: [
     'src/**/*.{ts,tsx}',

@@ -160,11 +160,17 @@ export const DashboardScreen: React.FC<DashboardProps> = ({
 
       {/* Dual Connection Cards */}
       <View style={styles.connRow}>
-        <ConnectionCard
-          label="Drive"
-          connected={stats.driveConnected}
-          detail={stats.driveConnected ? `${stats.filesOnDrive} files` : 'WiFi not connected'}
-        />
+        <TouchableOpacity
+          style={{ flex: 1 }}
+          onPress={() => { if (!stats.driveConnected) onNavigate('WiFiSetup'); }}
+          activeOpacity={stats.driveConnected ? 1 : 0.6}
+        >
+          <ConnectionCard
+            label="Drive"
+            connected={stats.driveConnected}
+            detail={stats.driveConnected ? `${stats.filesOnDrive} files` : 'Tap to connect'}
+          />
+        </TouchableOpacity>
         <ConnectionCard
           label="Cloud"
           connected={networkState.isCloudReachable}

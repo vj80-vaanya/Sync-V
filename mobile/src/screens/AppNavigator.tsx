@@ -5,15 +5,17 @@ import { DeviceListScreen } from './DeviceList';
 import { LogsUploadScreen } from './LogsUpload';
 import { FirmwareUpdateScreen } from './FirmwareUpdate';
 import { SettingsScreen } from './Settings';
+import { WiFiSetupScreen } from './WiFiSetup';
 import { NetworkService } from '../services/NetworkService';
 import { DriveCommService } from '../services/DriveCommService';
+import { WiFiService } from '../services/WiFiService';
 import { LogsService } from '../services/LogsService';
 import { FirmwareService } from '../services/FirmwareService';
 import { CloudApiService } from '../services/CloudApiService';
 import { NetworkState } from '../types/Network';
 import { COLORS } from '../theme/colors';
 
-type ScreenName = 'Dashboard' | 'DeviceList' | 'LogsUpload' | 'FirmwareUpdate' | 'Settings';
+type ScreenName = 'Dashboard' | 'DeviceList' | 'LogsUpload' | 'FirmwareUpdate' | 'Settings' | 'WiFiSetup';
 
 interface TabItem {
   key: ScreenName;
@@ -117,10 +119,12 @@ export const AppNavigator: React.FC = () => {
   const driveComm = useMemo(() => new DriveCommService(), []);
   const logsService = useMemo(() => new LogsService(), []);
   const firmwareService = useMemo(() => new FirmwareService(), []);
+  const wifiService = useMemo(() => new WiFiService(), []);
 
-  // Wire cloud API into services
+  // Wire cloud API and drive comm into services
   useEffect(() => {
     networkService.setCloudApi(cloudApi);
+    networkService.setDriveComm(driveComm);
     logsService.setCloudApi(cloudApi);
     firmwareService.setCloudApi(cloudApi);
 
@@ -183,7 +187,19 @@ export const AppNavigator: React.FC = () => {
           <SettingsScreen
             networkService={networkService}
             cloudApi={cloudApi}
+            driveComm={driveComm}
+            onNavigate={navigateTo}
             onNavigateBack={navigateBack}
+          />
+        );
+      case 'WiFiSetup':
+        return (
+          <WiFiSetupScreen
+            wifiService={wifiService}
+            driveComm={driveComm}
+            networkService={networkService}
+            onNavigateBack={navigateBack}
+            onConnected={() => navigateTo('Dashboard')}
           />
         );
     }

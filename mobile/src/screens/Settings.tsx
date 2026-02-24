@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, ActivityIndicator } from 'react-native';
 import { NetworkService } from '../services/NetworkService';
 import { CloudApiService } from '../services/CloudApiService';
+import { DriveCommService } from '../services/DriveCommService';
 import { NetworkState } from '../types/Network';
 import { CLOUD_CONFIG } from '../config';
 import { COLORS } from '../theme/colors';
@@ -9,6 +10,8 @@ import { COLORS } from '../theme/colors';
 interface SettingsProps {
   networkService: NetworkService;
   cloudApi: CloudApiService;
+  driveComm?: DriveCommService;
+  onNavigate?: (screen: string) => void;
   onNavigateBack: () => void;
 }
 
@@ -32,7 +35,7 @@ const SettingsRow: React.FC<{
   </View>
 );
 
-export const SettingsScreen: React.FC<SettingsProps> = ({ networkService, cloudApi, onNavigateBack }) => {
+export const SettingsScreen: React.FC<SettingsProps> = ({ networkService, cloudApi, driveComm, onNavigate, onNavigateBack }) => {
   const [driveAddress, setDriveAddress] = useState('192.168.4.1');
   const [drivePort, setDrivePort] = useState('8080');
   const [autoUpload, setAutoUpload] = useState(false);
@@ -194,6 +197,15 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ networkService, cloudA
 
         {/* Drive Connection */}
         <SettingsSection title="Drive Connection">
+          <View style={styles.buttonRow}>
+            <TouchableOpacity
+              style={styles.loginBtn}
+              onPress={() => onNavigate?.('WiFiSetup')}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.loginBtnText}>Connect to Drive WiFi</Text>
+            </TouchableOpacity>
+          </View>
           <View style={styles.inputRow}>
             <Text style={styles.inputLabel}>Drive IP Address</Text>
             <TextInput
@@ -212,6 +224,17 @@ export const SettingsScreen: React.FC<SettingsProps> = ({ networkService, cloudA
               onChangeText={setDrivePort}
               placeholder="8080"
               keyboardType="numeric"
+            />
+          </View>
+          <View style={styles.inputRow}>
+            <Text style={styles.inputLabel}>Auth Token</Text>
+            <TextInput
+              style={styles.input}
+              value={driveComm?.getDriveEndpoint().token || ''}
+              placeholder="Pre-shared key (optional)"
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={false}
             />
           </View>
         </SettingsSection>

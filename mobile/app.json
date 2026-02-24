@@ -23,7 +23,15 @@
         "backgroundColor": "#f8fafc"
       },
       "package": "com.syncv.mobile",
-      "versionCode": 1
+      "versionCode": 1,
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_WIFI_STATE",
+        "CHANGE_WIFI_STATE",
+        "ACCESS_NETWORK_STATE",
+        "CHANGE_NETWORK_STATE"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",

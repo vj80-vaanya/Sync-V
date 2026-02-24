@@ -1,6 +1,7 @@
 import { NetworkState } from '../types/Network';
 import { CloudApiService } from './CloudApiService';
-import { CLOUD_CONFIG } from '../config';
+import { DriveCommService } from './DriveCommService';
+import { CLOUD_CONFIG, DRIVE_CONFIG } from '../config';
 
 type StateChangeCallback = (state: NetworkState) => void;
 
@@ -14,7 +15,9 @@ export class NetworkService {
 
   private listeners: Set<StateChangeCallback> = new Set();
   private cloudApi: CloudApiService | null = null;
+  private driveComm: DriveCommService | null = null;
   private monitorTimer: ReturnType<typeof setInterval> | null = null;
+  private driveMonitorTimer: ReturnType<typeof setInterval> | null = null;
 
   getNetworkState(): NetworkState {
     return { ...this.state };
@@ -78,6 +81,35 @@ export class NetworkService {
     if (this.monitorTimer) {
       clearInterval(this.monitorTimer);
       this.monitorTimer = null;
+    }
+  }
+
+  // --- Drive Monitoring ---
+
+  setDriveComm(comm: DriveCommService): void {
+    this.driveComm = comm;
+  }
+
+  async checkDriveNow(): Promise<boolean> {
+    if (!this.driveComm) return false;
+    const reachable = await this.driveComm.pingDrive();
+    this.setDriveReachable(reachable);
+    return reachable;
+  }
+
+  startDriveMonitoring(intervalMs?: number): void {
+    this.stopDriveMonitoring();
+    this.checkDriveNow();
+    this.driveMonitorTimer = setInterval(
+      () => this.checkDriveNow(),
+      intervalMs || DRIVE_CONFIG.pingIntervalMs,
+    );
+  }
+
+  stopDriveMonitoring(): void {
+    if (this.driveMonitorTimer) {
+      clearInterval(this.driveMonitorTimer);
+      this.driveMonitorTimer = null;
     }
   }
 
