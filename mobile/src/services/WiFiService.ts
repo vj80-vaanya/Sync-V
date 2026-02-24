@@ -1,4 +1,5 @@
 import WifiManager from 'react-native-wifi-reborn';
+import { PermissionsAndroid, Platform } from 'react-native';
 import { WiFiNetwork } from '../types/Network';
 import { DRIVE_CONFIG } from '../config';
 
@@ -30,11 +31,17 @@ export class WiFiService {
 
   async requestPermissions(): Promise<boolean> {
     if (this.mockMode) return true;
+    if (Platform.OS !== 'android') return true;
     try {
-      // On Android, react-native-wifi-reborn requires ACCESS_FINE_LOCATION at runtime.
-      // The actual PermissionsAndroid call is handled by the RN layer;
-      // WiFi scanning will fail if not granted.
-      return true;
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        {
+          title: 'Location Permission',
+          message: 'Sync-V needs location access to scan for nearby WiFi drives.',
+          buttonPositive: 'Allow',
+        },
+      );
+      return granted === PermissionsAndroid.RESULTS.GRANTED;
     } catch {
       return false;
     }

@@ -10,6 +10,7 @@ module.exports = {
     '^@utils/(.*)$': '<rootDir>/src/utils/$1',
     '^@screens/(.*)$': '<rootDir>/src/screens/$1',
     '^react-native-wifi-reborn$': '<rootDir>/__mocks__/react-native-wifi-reborn',
+    '^react-native$': '<rootDir>/__mocks__/react-native',
   },
   collectCoverageFrom: [
     'src/**/*.{ts,tsx}',
