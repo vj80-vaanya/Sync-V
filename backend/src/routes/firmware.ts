@@ -71,6 +71,20 @@ export function createFirmwareRoutes(firmwareDistribution: FirmwareDistributionS
     res.status(201).json({ firmwareId: result.firmwareId });
   });
 
+  // DELETE /api/firmware/:id — delete firmware (admin/technician only)
+  router.delete('/:id', (req: AuthenticatedRequest, res: Response) => {
+    const role = req.user?.role;
+    if (role !== 'admin' && role !== 'technician') {
+      return res.status(403).json({ error: 'Only admin or technician can delete firmware' });
+    }
+
+    const deleted = firmwareDistribution.deleteFirmware(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: 'Firmware package not found' });
+    }
+    res.json({ success: true });
+  });
+
   // GET /api/firmware/:id — get firmware by ID (must be after all static paths)
   router.get('/:id', (req: Request, res: Response) => {
     const firmware = firmwareDistribution.getFirmware(req.params.id);

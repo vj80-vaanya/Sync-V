@@ -72,7 +72,10 @@ var ICONS = {
   prev: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>',
   next: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>',
   download: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
-  exportCsv: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>'
+  exportCsv: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>',
+  trash: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
+  eye: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+  alertTriangle: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
 };
 
 /* --- Download Helpers --- */
@@ -369,6 +372,61 @@ function renderFooter() {
     '<span class="footer-logo" style="display:inline-block;width:16px;height:16px;vertical-align:middle;margin-right:4px">' + BRAND_LOGO + '</span>' +
     'Sync-V &mdash; Powered by <span class="footer-brand">Sinnov8</span>';
   document.body.appendChild(footer);
+}
+
+/* --- Animated Counter --- */
+/* --- Confirm Modal --- */
+function showConfirmModal(title, message, onConfirm) {
+  // Remove any existing confirm modal
+  var existing = document.getElementById('confirm-modal');
+  if (existing) existing.remove();
+
+  var overlay = document.createElement('div');
+  overlay.id = 'confirm-modal';
+  overlay.className = 'modal-overlay confirm-modal';
+
+  overlay.innerHTML =
+    '<div class="modal-card">' +
+      '<div class="modal-body" style="padding:32px 28px 24px">' +
+        '<div class="confirm-icon">' + ICONS.alertTriangle + '</div>' +
+        '<div class="confirm-title">' + escapeHtml(title) + '</div>' +
+        '<div class="confirm-message">' + escapeHtml(message) + '</div>' +
+        '<div class="confirm-actions">' +
+          '<button class="btn btn-outline" id="confirm-cancel-btn">Cancel</button>' +
+          '<button class="btn btn-danger" id="confirm-ok-btn">' + ICONS.trash + ' Delete</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+
+  document.body.appendChild(overlay);
+
+  // Close on overlay click
+  overlay.addEventListener('click', function(e) {
+    if (e.target === overlay) closeConfirmModal();
+  });
+
+  document.getElementById('confirm-cancel-btn').addEventListener('click', closeConfirmModal);
+  document.getElementById('confirm-ok-btn').addEventListener('click', function() {
+    closeConfirmModal();
+    if (typeof onConfirm === 'function') onConfirm();
+  });
+
+  // Focus the cancel button for keyboard accessibility
+  document.getElementById('confirm-cancel-btn').focus();
+
+  // ESC to close
+  overlay._escHandler = function(e) {
+    if (e.key === 'Escape') closeConfirmModal();
+  };
+  document.addEventListener('keydown', overlay._escHandler);
+}
+
+function closeConfirmModal() {
+  var modal = document.getElementById('confirm-modal');
+  if (modal) {
+    document.removeEventListener('keydown', modal._escHandler);
+    modal.remove();
+  }
 }
 
 /* --- Animated Counter --- */

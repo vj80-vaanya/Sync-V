@@ -68,6 +68,15 @@ export function createLogRoutes(logIngestion: LogIngestionService): Router {
     res.json({ valid });
   });
 
+  // DELETE /api/logs/:id — delete a log record
+  router.delete('/:id', (req: Request, res: Response) => {
+    const deleted = logIngestion.deleteLog(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: 'Log not found' });
+    }
+    res.json({ success: true });
+  });
+
   // GET /api/logs/:id — full log record including raw_data
   router.get('/:id', (req: Request, res: Response) => {
     const log = logIngestion.getLogById(req.params.id);

@@ -172,7 +172,8 @@
           '<td>' + formatDate(log.uploaded_at) + '</td>' +
           '<td>' +
             '<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();downloadLogRaw(\'' + escapeHtml(log.id) + '\',\'' + escapeHtml(log.filename) + '\')" title="Download raw">' + ICONS.download + '</button> ' +
-            '<a class="btn btn-outline btn-sm" href="/dashboard/log-viewer.html?id=' + encodeURIComponent(log.id) + '" onclick="event.stopPropagation()" title="View full">View</a>' +
+            '<a class="btn btn-outline btn-sm" href="/dashboard/log-viewer.html?id=' + encodeURIComponent(log.id) + '" onclick="event.stopPropagation()" title="View full">View</a> ' +
+            '<button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteLog(\'' + escapeHtml(log.id) + '\',\'' + escapeHtml(log.filename) + '\')" title="Delete">' + ICONS.trash + '</button>' +
           '</td>' +
         '</tr>';
       }).join('');
@@ -237,6 +238,22 @@
 
     function closePreviewModal() {
       document.getElementById('log-preview-modal').style.display = 'none';
+    }
+
+    function deleteLog(logId, filename) {
+      showConfirmModal(
+        'Delete Log',
+        'Are you sure you want to delete "' + filename + '"? This action cannot be undone.',
+        async function() {
+          var result = await apiDelete('/api/logs/' + encodeURIComponent(logId));
+          if (result && result.success) {
+            showToast('Log deleted: ' + filename, 'success');
+            loadLogs();
+          } else {
+            showToast((result && result.error) || 'Failed to delete log', 'error');
+          }
+        }
+      );
     }
 
     loadFilters();

@@ -41,3 +41,7 @@ async function apiPost(path, body) {
 async function apiPatch(path, body) {
   return api(path, { method: 'PATCH', body: JSON.stringify(body) });
 }
+
+async function apiDelete(path) {
+  return api(path, { method: 'DELETE' });
+}

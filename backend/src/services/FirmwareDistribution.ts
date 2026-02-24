@@ -67,6 +67,10 @@ export class FirmwareDistributionService {
     return fw !== undefined && fw.sha256 === sha256;
   }
 
+  deleteFirmware(id: string): boolean {
+    return this.model.delete(id);
+  }
+
   getAllFirmware(): FirmwareRecord[] {
     return this.model.getAll();
   }

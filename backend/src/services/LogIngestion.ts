@@ -96,6 +96,10 @@ export class LogIngestionService {
     return this.model.getDistinctFormats();
   }
 
+  deleteLog(logId: string): boolean {
+    return this.model.delete(logId);
+  }
+
   verifyLogIntegrity(logId: string, checksum: string): boolean {
     const log = this.model.getById(logId);
     return log !== undefined && log.checksum === checksum;

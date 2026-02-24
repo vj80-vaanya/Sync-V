@@ -43,6 +43,7 @@
               <th>Status</th>
               <th>Firmware</th>
               <th>Last Seen</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody id="device-table"></tbody>
@@ -66,7 +67,7 @@
     var deviceTypes = new Set();
 
     // Show skeleton loading
-    document.getElementById('device-table').innerHTML = skeletonRows(5, 6);
+    document.getElementById('device-table').innerHTML = skeletonRows(5, 7);
 
     async function loadDevices() {
       allDevices = await apiGet('/api/devices') || [];
@@ -87,26 +88,31 @@
         { key: function(d) { return d.type; }, type: 'string' },
         { key: function(d) { return d.status; }, type: 'string' },
         { key: function(d) { return d.firmware_version; }, type: 'string' },
-        { key: function(d) { return d.last_seen; }, type: 'date' }
+        { key: function(d) { return d.last_seen; }, type: 'date' },
+        null // Actions — not sortable
       ]);
     }
 
     function renderDevices(devices) {
       var tbody = document.getElementById('device-table');
       if (devices.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">' +
+        tbody.innerHTML = '<tr><td colspan="7" class="empty-state">' +
           '<div class="empty-icon-circle">' + ICONS.emptyBox + '</div>' +
           '<h3>No devices found</h3><p>Try adjusting your filters</p></td></tr>';
         return;
       }
       tbody.innerHTML = devices.map(function(d) {
-        return '<tr onclick="window.location.href=\'/dashboard/device-detail.html?id=' + encodeURIComponent(d.id) + '\'">' +
+        var detailUrl = '/dashboard/device-detail.html?id=' + encodeURIComponent(d.id);
+        return '<tr onclick="window.location.href=\'' + detailUrl + '\'">' +
           '<td><strong>' + escapeHtml(d.id) + '</strong></td>' +
           '<td>' + escapeHtml(d.name) + '</td>' +
           '<td><span class="badge badge-muted">' + escapeHtml(d.type) + '</span></td>' +
           '<td>' + statusBadge(d.status) + '</td>' +
           '<td class="text-mono">' + escapeHtml(d.firmware_version || '-') + '</td>' +
           '<td>' + formatDate(d.last_seen) + '</td>' +
+          '<td>' +
+            '<a class="btn btn-outline btn-sm" href="' + detailUrl + '" onclick="event.stopPropagation()" title="View Details">' + ICONS.eye + ' View</a>' +
+          '</td>' +
         '</tr>';
       }).join('');
       staggerRows('device-table');

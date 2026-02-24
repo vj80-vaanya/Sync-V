@@ -28,6 +28,23 @@
     <div id="upload-section" style="display:none">
       <div class="form-section">
         <h3>Upload Firmware Package</h3>
+
+        <!-- Drag & Drop Zone -->
+        <div class="drop-zone" id="fw-drop-zone">
+          <div class="drop-zone-icon" id="drop-zone-icon-wrap"></div>
+          <div class="drop-zone-text">Drop firmware files here or click to browse</div>
+          <div class="drop-zone-hint">Supported formats: .bin, .hex, .fw</div>
+          <input type="file" id="fw-file-input" accept=".bin,.hex,.fw">
+        </div>
+
+        <!-- File preview (shown after file selected) -->
+        <div id="fw-file-preview" style="display:none"></div>
+
+        <!-- Upload progress bar -->
+        <div id="fw-progress" style="display:none">
+          <div class="progress-bar-wrap"><div class="progress-bar" id="fw-progress-bar"></div></div>
+        </div>
+
         <form id="upload-form">
           <div class="form-row">
             <div class="form-group">
@@ -79,6 +96,7 @@
               <th>SHA256</th>
               <th>Released</th>
               <th>Description</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody id="fw-table"></tbody>
@@ -101,15 +119,83 @@
 
     // Show skeleton loading
     document.getElementById('fw-stats').innerHTML = skeletonCards(3);
-    document.getElementById('fw-table').innerHTML = skeletonRows(4, 7);
+    document.getElementById('fw-table').innerHTML = skeletonRows(4, 8);
 
     // Add upload icon to submit button
     document.getElementById('upload-btn').innerHTML = ICONS.upload + ' Upload Firmware';
+
+    // Drop zone icon
+    document.getElementById('drop-zone-icon-wrap').innerHTML = ICONS.upload;
 
     // Show upload form for admin/technician
     var user = AUTH.getUser();
     if (user && (user.role === 'admin' || user.role === 'technician')) {
       document.getElementById('upload-section').style.display = 'block';
+    }
+
+    // --- Drag & Drop Logic ---
+    var dropZone = document.getElementById('fw-drop-zone');
+    var fileInput = document.getElementById('fw-file-input');
+    var selectedFile = null;
+
+    dropZone.addEventListener('dragover', function(e) {
+      e.preventDefault();
+      dropZone.classList.add('drag-over');
+    });
+
+    dropZone.addEventListener('dragleave', function(e) {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+    });
+
+    dropZone.addEventListener('drop', function(e) {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      if (e.dataTransfer.files.length > 0) handleFileSelect(e.dataTransfer.files[0]);
+    });
+
+    fileInput.addEventListener('change', function() {
+      if (fileInput.files.length > 0) handleFileSelect(fileInput.files[0]);
+    });
+
+    function handleFileSelect(file) {
+      var validExts = ['.bin', '.hex', '.fw'];
+      var ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+      if (validExts.indexOf(ext) === -1) {
+        showToast('Invalid file type. Supported: .bin, .hex, .fw', 'error');
+        return;
+      }
+
+      selectedFile = file;
+
+      // Auto-fill filename and size
+      document.getElementById('fw-filename').value = file.name;
+      document.getElementById('fw-size').value = file.size;
+
+      // Show file preview
+      var preview = document.getElementById('fw-file-preview');
+      preview.style.display = 'block';
+      preview.innerHTML =
+        '<div class="file-preview">' +
+          '<div class="file-preview-icon">' + ICONS.firmware + '</div>' +
+          '<div class="file-preview-info">' +
+            '<div class="file-preview-name">' + escapeHtml(file.name) + '</div>' +
+            '<div class="file-preview-size">' + formatSize(file.size) + '</div>' +
+          '</div>' +
+          '<button type="button" class="file-preview-remove" onclick="clearFileSelection()" title="Remove">&times;</button>' +
+        '</div>';
+
+      // Hide drop zone
+      dropZone.style.display = 'none';
+    }
+
+    function clearFileSelection() {
+      selectedFile = null;
+      fileInput.value = '';
+      document.getElementById('fw-file-preview').style.display = 'none';
+      document.getElementById('fw-filename').value = '';
+      document.getElementById('fw-size').value = '';
+      dropZone.style.display = '';
     }
 
     var allFirmware = [];
@@ -170,20 +256,26 @@
         { key: function(fw) { return fw.size; }, type: 'number' },
         null, // SHA256 — not sortable
         { key: function(fw) { return fw.release_date; }, type: 'date' },
-        null  // Description — not sortable
+        null, // Description — not sortable
+        null  // Actions — not sortable
       ]);
     }
+
+    var canDelete = user && (user.role === 'admin' || user.role === 'technician');
 
     function renderFirmware(fwList) {
       var tbody = document.getElementById('fw-table');
       if (fwList.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty-state">' +
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">' +
           '<div class="empty-icon-circle">' + ICONS.emptyBox + '</div>' +
           '<h3>No firmware packages uploaded</h3></td></tr>';
         return;
       }
 
       tbody.innerHTML = fwList.map(function(fw) {
+        var actionsHtml = canDelete
+          ? '<button class="btn btn-danger btn-sm" onclick="deleteFirmware(\'' + escapeHtml(fw.id) + '\',\'' + escapeHtml(fw.version) + '\')" title="Delete">' + ICONS.trash + '</button>'
+          : '-';
         return '<tr style="cursor:default">' +
           '<td><strong>' + escapeHtml(fw.version) + '</strong></td>' +
           '<td><span class="badge badge-muted">' + escapeHtml(fw.device_type) + '</span></td>' +
@@ -192,6 +284,7 @@
           '<td class="text-mono"><span class="text-truncate">' + escapeHtml(fw.sha256) + '</span></td>' +
           '<td>' + formatDate(fw.release_date) + '</td>' +
           '<td>' + escapeHtml(fw.description || '-') + '</td>' +
+          '<td>' + actionsHtml + '</td>' +
         '</tr>';
       }).join('');
       staggerRows('fw-table');
@@ -199,6 +292,16 @@
 
     document.getElementById('upload-form').addEventListener('submit', async function(e) {
       e.preventDefault();
+
+      var progressWrap = document.getElementById('fw-progress');
+      var progressBar = document.getElementById('fw-progress-bar');
+      var uploadBtn = document.getElementById('upload-btn');
+
+      // Show progress
+      progressWrap.style.display = 'block';
+      progressBar.classList.add('indeterminate');
+      uploadBtn.disabled = true;
+      uploadBtn.innerHTML = '<span class="spinner spinner-sm"></span> Uploading...';
 
       var body = {
         version: document.getElementById('fw-version').value.trim(),
@@ -210,14 +313,38 @@
       };
 
       var result = await apiPost('/api/firmware', body);
+
+      // Reset progress
+      progressBar.classList.remove('indeterminate');
+      progressWrap.style.display = 'none';
+      uploadBtn.disabled = false;
+      uploadBtn.innerHTML = ICONS.upload + ' Upload Firmware';
+
       if (result && result.firmwareId) {
-        showToast('Firmware uploaded successfully: ' + result.firmwareId, 'success');
+        showToast('Firmware uploaded successfully', 'success');
         document.getElementById('upload-form').reset();
+        clearFileSelection();
         loadFirmware();
       } else if (result && result.error) {
         showToast(result.error, 'error');
       }
     });
+
+    function deleteFirmware(fwId, version) {
+      showConfirmModal(
+        'Delete Firmware',
+        'Are you sure you want to delete firmware v' + version + '? This action cannot be undone.',
+        async function() {
+          var result = await apiDelete('/api/firmware/' + encodeURIComponent(fwId));
+          if (result && result.success) {
+            showToast('Firmware deleted: v' + version, 'success');
+            loadFirmware();
+          } else {
+            showToast((result && result.error) || 'Failed to delete firmware', 'error');
+          }
+        }
+      );
+    }
 
     loadFirmware();
   </script>
