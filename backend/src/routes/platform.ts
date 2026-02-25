@@ -185,7 +185,7 @@ export function createPlatformRoutes(
   });
 
   // POST /api/platform/organizations/:id/users — create user in specific org
-  router.post('/organizations/:id/users', (req: AuthenticatedRequest, res: Response) => {
+  router.post('/organizations/:id/users', async (req: AuthenticatedRequest, res: Response) => {
     const orgId = req.params.id;
     const org = orgModel.getById(orgId);
     if (!org) {
@@ -205,7 +205,7 @@ export function createPlatformRoutes(
       return res.status(409).json({ error: 'Username already taken' });
     }
 
-    const passwordHash = authService.hashPassword(password);
+    const passwordHash = await authService.hashPassword(password);
     const user = userModel.create({
       id: uuidv4(),
       username,

@@ -30,7 +30,7 @@ describe('Org Admin Routes', () => {
   let orgId: string;
   let orgAdminUserId: string;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     const result = createApp(':memory:');
     app = result.app;
     db = result.db;
@@ -48,7 +48,7 @@ describe('Org Admin Routes', () => {
     userModel.create({
       id: orgAdminUserId,
       username: 'orgadmin',
-      password_hash: authService.hashPassword('admin123'),
+      password_hash: await authService.hashPassword('admin123'),
       role: 'org_admin',
       org_id: orgId,
     });

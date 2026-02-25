@@ -12,7 +12,7 @@ describe('Backend API Routes', () => {
   let viewerToken: string;
   let orgId: string;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     const result = createApp(':memory:');
     app = result.app;
     db = result.db;
@@ -29,14 +29,14 @@ describe('Backend API Routes', () => {
     userModel.create({
       id: 'user-admin',
       username: 'admin',
-      password_hash: authService.hashPassword('admin123'),
+      password_hash: await authService.hashPassword('admin123'),
       role: 'org_admin',
       org_id: orgId,
     });
     userModel.create({
       id: 'user-viewer',
       username: 'viewer',
-      password_hash: authService.hashPassword('viewer123'),
+      password_hash: await authService.hashPassword('viewer123'),
       role: 'viewer',
       org_id: orgId,
     });

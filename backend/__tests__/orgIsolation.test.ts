@@ -58,7 +58,7 @@ describe('Organization Isolation', () => {
     userModel.create({
       id: 'admin-a',
       username: 'admin-a',
-      password_hash: authService.hashPassword('pass-a'),
+      password_hash: await authService.hashPassword('pass-a'),
       role: 'org_admin',
       org_id: orgAId,
     });
@@ -77,7 +77,7 @@ describe('Organization Isolation', () => {
     userModel.create({
       id: 'admin-b',
       username: 'admin-b',
-      password_hash: authService.hashPassword('pass-b'),
+      password_hash: await authService.hashPassword('pass-b'),
       role: 'org_admin',
       org_id: orgBId,
     });
@@ -93,7 +93,7 @@ describe('Organization Isolation', () => {
     userModel.create({
       id: 'platform-root',
       username: 'platform-root',
-      password_hash: authService.hashPassword('root123'),
+      password_hash: await authService.hashPassword('root123'),
       role: 'platform_admin',
     });
 
@@ -264,7 +264,7 @@ describe('Organization Isolation', () => {
     userModel.create({
       id: 'free-admin',
       username: 'free-admin',
-      password_hash: authService.hashPassword('pass'),
+      password_hash: await authService.hashPassword('pass'),
       role: 'org_admin',
       org_id: freeOrgId,
     });

@@ -106,23 +106,32 @@ describe('Auth Service', () => {
     expect(authService.hasRole('bad-token', 'viewer')).toBe(false);
   });
 
-  test('hashes and verifies password with bcrypt', () => {
+  test('hashes and verifies password with argon2id', async () => {
     const password = 'securePassword123!';
-    const hash = authService.hashPassword(password);
+    const hash = await authService.hashPassword(password);
 
-    expect(hash).toMatch(/^\$2[ab]\$/);
+    expect(hash).toMatch(/^\$argon2id\$/);
     expect(hash).not.toBe(password);
-    expect(authService.verifyPassword(password, hash)).toBe(true);
-    expect(authService.verifyPassword('wrong', hash)).toBe(false);
+    expect(await authService.verifyPassword(password, hash)).toBe(true);
+    expect(await authService.verifyPassword('wrong', hash)).toBe(false);
   });
 
-  test('verifies legacy SHA256 password hashes', () => {
+  test('verifies legacy SHA256 password hashes', async () => {
     const crypto = require('crypto');
     const password = 'legacyPass';
     const sha256Hash = crypto.createHash('sha256').update(password).digest('hex');
 
-    expect(authService.verifyPassword(password, sha256Hash)).toBe(true);
-    expect(authService.verifyPassword('wrong', sha256Hash)).toBe(false);
+    expect(await authService.verifyPassword(password, sha256Hash)).toBe(true);
+    expect(await authService.verifyPassword('wrong', sha256Hash)).toBe(false);
+  });
+
+  test('verifies legacy bcrypt password hashes', async () => {
+    const bcryptjs = require('bcryptjs');
+    const password = 'bcryptPass';
+    const bcryptHash = bcryptjs.hashSync(password, 10);
+
+    expect(await authService.verifyPassword(password, bcryptHash)).toBe(true);
+    expect(await authService.verifyPassword('wrong', bcryptHash)).toBe(false);
   });
 });
 

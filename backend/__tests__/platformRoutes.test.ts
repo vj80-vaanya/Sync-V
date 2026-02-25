@@ -30,7 +30,7 @@ describe('Platform Admin Routes', () => {
   let viewerToken: string;
   let createdOrgId: string;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     const result = createApp(':memory:');
     app = result.app;
     db = result.db;
@@ -42,7 +42,7 @@ describe('Platform Admin Routes', () => {
     userModel.create({
       id: 'platform-admin-1',
       username: 'platformadmin',
-      password_hash: authService.hashPassword('admin123'),
+      password_hash: await authService.hashPassword('admin123'),
       role: 'platform_admin',
     });
 
@@ -59,7 +59,7 @@ describe('Platform Admin Routes', () => {
     userModel.create({
       id: 'viewer-user-1',
       username: 'vieweruser',
-      password_hash: authService.hashPassword('viewer123'),
+      password_hash: await authService.hashPassword('viewer123'),
       role: 'viewer',
       org_id: 'viewer-org',
     });

@@ -12,7 +12,7 @@ describe('Extended Route Coverage', () => {
   let viewerToken: string;
   let orgId: string;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     const result = createApp(':memory:');
     app = result.app;
     db = result.db;
@@ -24,8 +24,8 @@ describe('Extended Route Coverage', () => {
     orgId = 'ext-test-org';
     orgModel.create({ id: orgId, name: 'Ext Test Org', slug: 'ext-test' });
 
-    userModel.create({ id: 'u1', username: 'admin', password_hash: authService.hashPassword('pass'), role: 'org_admin', org_id: orgId });
-    userModel.create({ id: 'u2', username: 'viewer', password_hash: authService.hashPassword('pass'), role: 'viewer', org_id: orgId });
+    userModel.create({ id: 'u1', username: 'admin', password_hash: await authService.hashPassword('pass'), role: 'org_admin', org_id: orgId });
+    userModel.create({ id: 'u2', username: 'viewer', password_hash: await authService.hashPassword('pass'), role: 'viewer', org_id: orgId });
 
     adminToken = authService.generateToken({ userId: 'u1', username: 'admin', role: 'org_admin', orgId });
     viewerToken = authService.generateToken({ userId: 'u2', username: 'viewer', role: 'viewer', orgId });

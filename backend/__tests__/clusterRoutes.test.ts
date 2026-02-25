@@ -48,7 +48,7 @@ describe('Cluster Routes', () => {
     userModel.create({
       id: 'cluster-admin-1',
       username: 'clusteradmin',
-      password_hash: authService.hashPassword('admin123'),
+      password_hash: await authService.hashPassword('admin123'),
       role: 'org_admin',
       org_id: orgId,
     });
@@ -64,7 +64,7 @@ describe('Cluster Routes', () => {
     userModel.create({
       id: 'cluster-viewer-1',
       username: 'clusterviewer',
-      password_hash: authService.hashPassword('viewer123'),
+      password_hash: await authService.hashPassword('viewer123'),
       role: 'viewer',
       org_id: orgId,
     });

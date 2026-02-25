@@ -1,19 +1,19 @@
 import crypto from 'crypto';
-import bcryptjs from 'bcryptjs';
+import * as argon2 from 'argon2';
 import { v4 as uuidv4 } from 'uuid';
 import { createDatabase } from './models/Database';
 
 const DB_PATH = process.env.DB_PATH || ':memory:';
 
-function hashPassword(password: string): string {
-  return bcryptjs.hashSync(password, 12);
+async function hashPassword(password: string): Promise<string> {
+  return argon2.hash(password, { type: argon2.argon2id });
 }
 
 function sha256(content: string): string {
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
-function seed(): void {
+async function seed(): Promise<void> {
   const db = createDatabase(DB_PATH);
 
   // Check idempotency — skip if platform admin already exists
@@ -30,7 +30,7 @@ function seed(): void {
   const platformAdminId = uuidv4();
   db.prepare(
     'INSERT INTO users (id, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(platformAdminId, 'platform-admin', hashPassword('admin123'), 'platform_admin', now, now);
+  ).run(platformAdminId, 'platform-admin', await hashPassword('admin123'), 'platform_admin', now, now);
 
   // --- Organization ---
   const orgId = uuidv4();
@@ -42,19 +42,19 @@ function seed(): void {
   const orgAdminId = uuidv4();
   db.prepare(
     'INSERT INTO users (id, username, password_hash, role, org_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).run(orgAdminId, 'admin', hashPassword('admin123'), 'org_admin', orgId, now, now);
+  ).run(orgAdminId, 'admin', await hashPassword('admin123'), 'org_admin', orgId, now, now);
 
   // --- Technician ---
   const techId = uuidv4();
   db.prepare(
     'INSERT INTO users (id, username, password_hash, role, org_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).run(techId, 'tech1', hashPassword('tech123'), 'technician', orgId, now, now);
+  ).run(techId, 'tech1', await hashPassword('tech123'), 'technician', orgId, now, now);
 
   // --- Viewer ---
   const viewerId = uuidv4();
   db.prepare(
     'INSERT INTO users (id, username, password_hash, role, org_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).run(viewerId, 'viewer1', hashPassword('viewer123'), 'viewer', orgId, now, now);
+  ).run(viewerId, 'viewer1', await hashPassword('viewer123'), 'viewer', orgId, now, now);
 
   // --- Clusters ---
   const cluster1Id = uuidv4();
@@ -182,7 +182,7 @@ function seed(): void {
   const org2AdminId = uuidv4();
   db.prepare(
     'INSERT INTO users (id, username, password_hash, role, org_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).run(org2AdminId, 'beta-admin', hashPassword('beta123'), 'org_admin', org2Id, now, now);
+  ).run(org2AdminId, 'beta-admin', await hashPassword('beta123'), 'org_admin', org2Id, now, now);
 
   console.log('Demo data seeded:');
   console.log('  Platform admin: platform-admin/admin123');

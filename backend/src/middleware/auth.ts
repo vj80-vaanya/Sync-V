@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import bcryptjs from 'bcryptjs';
+import * as argon2 from 'argon2';
 
 export interface TokenPayload {
   userId: string;
@@ -65,18 +65,23 @@ export class AuthService {
     return userLevel >= requiredLevel;
   }
 
-  hashPassword(password: string): string {
-    return bcryptjs.hashSync(password, 12);
+  async hashPassword(password: string): Promise<string> {
+    return argon2.hash(password, { type: argon2.argon2id });
   }
 
-  verifyPassword(password: string, hash: string): boolean {
+  async verifyPassword(password: string, hash: string): Promise<boolean> {
     // Support legacy SHA256 hashes during migration
-    if (!hash.startsWith('$2a$') && !hash.startsWith('$2b$')) {
+    if (/^[0-9a-f]{64}$/.test(hash)) {
       const crypto = require('crypto');
       const sha256 = crypto.createHash('sha256').update(password).digest('hex');
       return sha256 === hash;
     }
-    return bcryptjs.compareSync(password, hash);
+    // Support legacy bcrypt hashes during migration
+    if (hash.startsWith('$2a$') || hash.startsWith('$2b$')) {
+      const bcryptjs = require('bcryptjs');
+      return bcryptjs.compareSync(password, hash);
+    }
+    return argon2.verify(hash, password);
   }
 }
 

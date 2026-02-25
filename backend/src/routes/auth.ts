@@ -17,7 +17,7 @@ export function createAuthRoutes(authService: AuthService, userModel: UserModel,
   const router = Router();
 
   // POST /api/auth/bootstrap — one-time platform admin creation
-  router.post('/bootstrap', (_req: Request, res: Response) => {
+  router.post('/bootstrap', async (_req: Request, res: Response) => {
     const clientIp = _req.ip || _req.socket.remoteAddress || 'unknown';
     const rateLimitKey = `${clientIp}:bootstrap`;
 
@@ -42,7 +42,7 @@ export function createAuthRoutes(authService: AuthService, userModel: UserModel,
       return res.status(409).json({ error: 'Username already taken' });
     }
 
-    const passwordHash = authService.hashPassword(password);
+    const passwordHash = await authService.hashPassword(password);
     const user = userModel.create({
       id: uuidv4(),
       username,
@@ -62,7 +62,7 @@ export function createAuthRoutes(authService: AuthService, userModel: UserModel,
   });
 
   // POST /api/auth/login — authenticate and get token
-  router.post('/login', (req: Request, res: Response) => {
+  router.post('/login', async (req: Request, res: Response) => {
     const { username, password } = req.body;
 
     if (!username || !password) {
@@ -82,7 +82,7 @@ export function createAuthRoutes(authService: AuthService, userModel: UserModel,
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    if (!authService.verifyPassword(password, user.password_hash)) {
+    if (!(await authService.verifyPassword(password, user.password_hash))) {
       loginTracker?.recordFailure(rateLimitKey);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -109,7 +109,7 @@ export function createAuthRoutes(authService: AuthService, userModel: UserModel,
   });
 
   // POST /api/auth/register — create a new user (org-scoped)
-  router.post('/register', (req: AuthenticatedRequest, res: Response) => {
+  router.post('/register', async (req: AuthenticatedRequest, res: Response) => {
     const { username, password, role, org_id } = req.body;
 
     if (!username || !password) {
@@ -173,7 +173,7 @@ export function createAuthRoutes(authService: AuthService, userModel: UserModel,
       return res.status(409).json({ error: 'Username already taken' });
     }
 
-    const passwordHash = authService.hashPassword(password);
+    const passwordHash = await authService.hashPassword(password);
     const user = userModel.create({
       id: uuidv4(),
       username,

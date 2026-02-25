@@ -27,7 +27,7 @@ export function createOrgRoutes(
   });
 
   // POST /api/org/users
-  router.post('/users', (req: AuthenticatedRequest, res: Response) => {
+  router.post('/users', async (req: AuthenticatedRequest, res: Response) => {
     const { username, password, role } = req.body;
     if (!username || !password) {
       return res.status(400).json({ error: 'Missing username or password' });
@@ -47,7 +47,7 @@ export function createOrgRoutes(
       return res.status(409).json({ error: 'Username already taken' });
     }
 
-    const passwordHash = authService.hashPassword(password);
+    const passwordHash = await authService.hashPassword(password);
     const user = userModel.create({
       id: uuidv4(),
       username,
