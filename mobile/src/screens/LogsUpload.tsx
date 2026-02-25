@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Alert } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl } from 'react-native';
 import { LogsService } from '../services/LogsService';
 import { DriveCommService } from '../services/DriveCommService';
 import { NetworkService } from '../services/NetworkService';
@@ -33,9 +33,9 @@ const STATUS_LABELS: Record<string, string> = {
 const LogItem: React.FC<{
   log: LogFile;
   status?: LogUploadStatus;
+  isEncrypted: boolean;
   onUpload: () => void;
-  onPurge: () => void;
-}> = ({ log, status, onUpload, onPurge }) => (
+}> = ({ log, status, isEncrypted, onUpload }) => (
   <View style={styles.logCard}>
     <View style={styles.logHeader}>
       <View style={styles.logInfo}>
@@ -44,25 +44,43 @@ const LogItem: React.FC<{
           {(log.size / 1024).toFixed(1)} KB  |  {log.deviceId}
         </Text>
       </View>
-      {status && (
-        <View style={[styles.statusBadge, { backgroundColor: (STATUS_COLORS[status] || '#94a3b8') + '18' }]}>
-          <Text style={[styles.statusText, { color: STATUS_COLORS[status] || '#94a3b8' }]}>
-            {STATUS_LABELS[status] || status}
-          </Text>
-        </View>
-      )}
+      <View style={styles.badges}>
+        {isEncrypted && (
+          <View style={styles.encryptedBadge}>
+            <Text style={styles.encryptedText}>Encrypted</Text>
+          </View>
+        )}
+        {status && (
+          <View style={[styles.statusBadge, { backgroundColor: (STATUS_COLORS[status] || '#94a3b8') + '18' }]}>
+            <Text style={[styles.statusText, { color: STATUS_COLORS[status] || '#94a3b8' }]}>
+              {STATUS_LABELS[status] || status}
+            </Text>
+          </View>
+        )}
+      </View>
+    </View>
+
+    {/* Security notice — no content access */}
+    <View style={styles.securityNotice}>
+      <Text style={styles.securityText}>
+        {status === 'uploaded'
+          ? 'Transferred to cloud. Local data deleted.'
+          : isEncrypted
+          ? 'Content encrypted. Will be deleted after cloud transfer.'
+          : 'Metadata only — content not stored on device.'}
+      </Text>
     </View>
 
     <View style={styles.logActions}>
       {(!status || status === 'pending' || status === 'failed') && (
         <TouchableOpacity style={styles.uploadButton} onPress={onUpload} activeOpacity={0.7}>
-          <Text style={styles.uploadButtonText}>Upload</Text>
+          <Text style={styles.uploadButtonText}>Upload to Cloud</Text>
         </TouchableOpacity>
       )}
       {status === 'uploaded' && (
-        <TouchableOpacity style={styles.purgeButton} onPress={onPurge} activeOpacity={0.7}>
-          <Text style={styles.purgeButtonText}>Purge</Text>
-        </TouchableOpacity>
+        <View style={styles.deletedBadge}>
+          <Text style={styles.deletedText}>Auto-deleted from device</Text>
+        </View>
       )}
     </View>
   </View>
@@ -74,6 +92,7 @@ export const LogsUploadScreen: React.FC<LogsUploadProps> = ({ logsService, drive
   const [statusMap, setStatusMap] = useState<Record<string, LogUploadStatus>>({});
   const [networkState, setNetworkState] = useState<NetworkState>(networkService.getNetworkState());
   const queueCount = logsService.getUploadQueue().length;
+  const encryptedCount = logsService.getEncryptedCount();
 
   useEffect(() => {
     return networkService.onStateChange(setNetworkState);
@@ -108,13 +127,6 @@ export const LogsUploadScreen: React.FC<LogsUploadProps> = ({ logsService, drive
     setStatusMap((prev) => ({ ...prev, [log.filename]: result.status }));
   };
 
-  const handlePurge = async (filename: string) => {
-    const success = await logsService.purgeUploadedLog(filename);
-    if (success) {
-      setStatusMap((prev) => ({ ...prev, [filename]: 'purged' }));
-    }
-  };
-
   const handleUploadAll = async () => {
     for (const log of logs) {
       const status = statusMap[log.filename];
@@ -125,7 +137,7 @@ export const LogsUploadScreen: React.FC<LogsUploadProps> = ({ logsService, drive
   };
 
   const handleProcessQueue = async () => {
-    const result = await logsService.processUploadQueue();
+    await logsService.processUploadQueue();
     // Refresh status map
     const newStatuses: Record<string, LogUploadStatus> = { ...statusMap };
     for (const log of logs) {
@@ -151,7 +163,16 @@ export const LogsUploadScreen: React.FC<LogsUploadProps> = ({ logsService, drive
           backgroundColor: networkState.isCloudReachable ? COLORS.success : COLORS.danger,
         }]} />
         <Text style={styles.cloudStatusText}>
-          Cloud: {networkState.isCloudReachable ? 'Connected' : 'Offline'}
+          Cloud: {networkState.isCloudReachable ? 'Connected' : 'Offline — logs encrypted on device'}
+        </Text>
+      </View>
+
+      {/* Encryption Info Banner */}
+      <View style={styles.encryptionBanner}>
+        <Text style={styles.encryptionBannerText}>
+          All data is encrypted on-device. {encryptedCount > 0
+            ? `${encryptedCount} encrypted log${encryptedCount > 1 ? 's' : ''} pending upload.`
+            : 'Logs are auto-deleted after cloud transfer.'}
         </Text>
       </View>
 
@@ -183,8 +204,8 @@ export const LogsUploadScreen: React.FC<LogsUploadProps> = ({ logsService, drive
             <LogItem
               log={item}
               status={statusMap[item.filename]}
+              isEncrypted={logsService.isEncryptedOnDevice(item.filename)}
               onUpload={() => handleUpload(item)}
-              onPurge={() => handlePurge(item.filename)}
             />
           )}
           contentContainerStyle={styles.listContent}
@@ -233,6 +254,20 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#94a3b8',
   },
+  encryptionBanner: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    backgroundColor: '#eef2ff',
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+  },
+  encryptionBannerText: {
+    fontSize: 12,
+    color: '#4338ca',
+    fontWeight: '500',
+  },
   actionBar: {
     flexDirection: 'row',
     padding: 16,
@@ -272,7 +307,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   logInfo: { flex: 1, marginRight: 8 },
   logFilename: {
@@ -285,6 +320,21 @@ const styles = StyleSheet.create({
     color: '#94a3b8',
     marginTop: 2,
   },
+  badges: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  encryptedBadge: {
+    backgroundColor: '#dbeafe',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  encryptedText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#1d4ed8',
+  },
   statusBadge: {
     paddingHorizontal: 10,
     paddingVertical: 4,
@@ -293,6 +343,17 @@ const styles = StyleSheet.create({
   statusText: {
     fontSize: 11,
     fontWeight: '600',
+  },
+  securityNotice: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 6,
+    padding: 8,
+    marginBottom: 8,
+  },
+  securityText: {
+    fontSize: 11,
+    color: '#64748b',
+    fontStyle: 'italic',
   },
   logActions: {
     flexDirection: 'row',
@@ -310,17 +371,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
-  purgeButton: {
+  deletedBadge: {
     flex: 1,
     paddingVertical: 8,
-    backgroundColor: '#fef2f2',
+    backgroundColor: '#f0fdf4',
     borderRadius: 6,
     alignItems: 'center',
   },
-  purgeButtonText: {
-    color: '#ef4444',
-    fontSize: 13,
-    fontWeight: '600',
+  deletedText: {
+    color: '#16a34a',
+    fontSize: 12,
+    fontWeight: '500',
+    fontStyle: 'italic',
   },
   emptyState: {
     flex: 1,

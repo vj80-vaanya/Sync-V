@@ -34,17 +34,43 @@ describe('FirmwareService', () => {
     expect(available).toHaveLength(0);
   });
 
-  test('downloads signed firmware package', async () => {
-    firmwareService.setMockAvailableFirmware([mockPackage]);
-    firmwareService.setMockDownloadData('FIRMWARE_BINARY_DATA');
+  test('downloadAndTransfer succeeds when drive connected', async () => {
+    firmwareService.setMockDriveConnected(true);
+
+    const progressUpdates: FirmwareProgress[] = [];
+    firmwareService.onProgress((p) => progressUpdates.push({ ...p }));
+
+    const result = await firmwareService.downloadAndTransfer(mockPackage);
+    expect(result.success).toBe(true);
+    expect(progressUpdates.length).toBeGreaterThan(0);
+
+    const lastUpdate = progressUpdates[progressUpdates.length - 1];
+    expect(lastUpdate.phase).toBe('complete');
+    expect(lastUpdate.percentage).toBe(100);
+  });
+
+  test('downloadAndTransfer fails when drive disconnected', async () => {
+    firmwareService.setMockDriveConnected(false);
+
+    const progressUpdates: FirmwareProgress[] = [];
+    firmwareService.onProgress((p) => progressUpdates.push({ ...p }));
+
+    const result = await firmwareService.downloadAndTransfer(mockPackage);
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Transfer to drive failed');
+
+    const lastUpdate = progressUpdates[progressUpdates.length - 1];
+    expect(lastUpdate.phase).toBe('failed');
+  });
+
+  test('deprecated downloadFirmware calls downloadAndTransfer', async () => {
+    firmwareService.setMockDriveConnected(true);
 
     const result = await firmwareService.downloadFirmware(mockPackage);
     expect(result.success).toBe(true);
-    expect(result.localPath).toBeTruthy();
   });
 
-  test('transfers firmware to drive', async () => {
-    firmwareService.setMockDownloadData('FIRMWARE_BINARY_DATA');
+  test('deprecated transferToDrive works with mock', async () => {
     firmwareService.setMockDriveConnected(true);
 
     const result = await firmwareService.transferToDrive(
@@ -54,29 +80,19 @@ describe('FirmwareService', () => {
     expect(result.success).toBe(true);
   });
 
-  test('tracks download progress', async () => {
-    firmwareService.setMockAvailableFirmware([mockPackage]);
-    firmwareService.setMockDownloadData('FIRMWARE_BINARY_DATA');
-
-    const progressUpdates: FirmwareProgress[] = [];
-    firmwareService.onProgress((p) => progressUpdates.push({ ...p }));
-
-    await firmwareService.downloadFirmware(mockPackage);
-
-    expect(progressUpdates.length).toBeGreaterThan(0);
-    const lastUpdate = progressUpdates[progressUpdates.length - 1];
-    expect(lastUpdate.percentage).toBe(100);
-  });
-
-  test('tracks transfer progress', async () => {
+  test('tracks download and transfer progress', async () => {
     firmwareService.setMockDriveConnected(true);
 
     const progressUpdates: FirmwareProgress[] = [];
     firmwareService.onProgress((p) => progressUpdates.push({ ...p }));
 
-    await firmwareService.transferToDrive(mockPackage.filename, 'DATA');
+    await firmwareService.downloadAndTransfer(mockPackage);
 
-    expect(progressUpdates.length).toBeGreaterThan(0);
+    // Should have downloading, transferring, verifying, and complete phases
+    const phases = progressUpdates.map((p) => p.phase);
+    expect(phases).toContain('downloading');
+    expect(phases).toContain('transferring');
+    expect(phases).toContain('complete');
   });
 
   test('verifies integrity with SHA256', async () => {
@@ -94,7 +110,7 @@ describe('FirmwareService', () => {
   test('handles download failure', async () => {
     firmwareService.setMockDownloadShouldFail(true);
 
-    const result = await firmwareService.downloadFirmware(mockPackage);
+    const result = await firmwareService.downloadAndTransfer(mockPackage);
     expect(result.success).toBe(false);
     expect(result.error).toBeTruthy();
   });

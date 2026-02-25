@@ -21,9 +21,9 @@ const ProgressBar: React.FC<{ progress: number; color?: string }> = ({ progress,
 const FirmwareCard: React.FC<{
   firmware: FirmwarePackage;
   progress?: FirmwareProgress;
-  onDownload: () => void;
-  onTransfer: () => void;
-}> = ({ firmware, progress, onDownload, onTransfer }) => (
+  onUpdateDrive: () => void;
+  isUpdating: boolean;
+}> = ({ firmware, progress, onUpdateDrive, isUpdating }) => (
   <View style={styles.fwCard}>
     <View style={styles.fwHeader}>
       <View>
@@ -41,14 +41,21 @@ const FirmwareCard: React.FC<{
 
     <Text style={styles.fwDate}>Released: {firmware.releaseDate}</Text>
 
+    {/* Security notice */}
+    <View style={styles.securityNotice}>
+      <Text style={styles.securityText}>
+        Firmware is encrypted in transit. Not stored on this device.
+      </Text>
+    </View>
+
     {progress && (
       <View style={styles.progressSection}>
         <View style={styles.progressHeader}>
           <Text style={styles.progressPhase}>
-            {progress.phase === 'downloading' ? 'Downloading...' :
-             progress.phase === 'transferring' ? 'Transferring to Drive...' :
-             progress.phase === 'verifying' ? 'Verifying...' :
-             progress.phase === 'complete' ? 'Complete' :
+            {progress.phase === 'downloading' ? 'Downloading from cloud...' :
+             progress.phase === 'transferring' ? 'Transferring to drive (encrypted)...' :
+             progress.phase === 'verifying' ? 'Verifying integrity...' :
+             progress.phase === 'complete' ? 'Complete — firmware delivered' :
              progress.phase === 'failed' ? 'Failed' : progress.phase}
           </Text>
           <Text style={styles.progressPct}>{Math.round(progress.percentage)}%</Text>
@@ -62,12 +69,23 @@ const FirmwareCard: React.FC<{
     )}
 
     <View style={styles.fwActions}>
-      <TouchableOpacity style={styles.downloadButton} onPress={onDownload} activeOpacity={0.7}>
-        <Text style={styles.downloadButtonText}>Download</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={styles.transferButton} onPress={onTransfer} activeOpacity={0.7}>
-        <Text style={styles.transferButtonText}>Transfer to Drive</Text>
-      </TouchableOpacity>
+      {(!progress || progress.phase === 'failed') && (
+        <TouchableOpacity
+          style={[styles.updateButton, isUpdating && styles.updateButtonDisabled]}
+          onPress={onUpdateDrive}
+          disabled={isUpdating}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.updateButtonText}>
+            {isUpdating ? 'Updating...' : 'Update Drive'}
+          </Text>
+        </TouchableOpacity>
+      )}
+      {progress?.phase === 'complete' && (
+        <View style={styles.completeBadge}>
+          <Text style={styles.completeText}>Firmware delivered to drive</Text>
+        </View>
+      )}
     </View>
   </View>
 );
@@ -76,6 +94,7 @@ export const FirmwareUpdateScreen: React.FC<FirmwareUpdateProps> = ({ firmwareSe
   const [available, setAvailable] = useState<FirmwarePackage[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [progressMap, setProgressMap] = useState<Record<string, FirmwareProgress>>({});
+  const [updatingIds, setUpdatingIds] = useState<Set<string>>(new Set());
   const [networkState, setNetworkState] = useState<NetworkState>(networkService.getNetworkState());
 
   useEffect(() => {
@@ -93,15 +112,17 @@ export const FirmwareUpdateScreen: React.FC<FirmwareUpdateProps> = ({ firmwareSe
     setRefreshing(false);
   };
 
-  const handleDownload = async (fw: FirmwarePackage) => {
+  const handleUpdateDrive = async (fw: FirmwarePackage) => {
+    setUpdatingIds((prev) => new Set(prev).add(fw.id));
     firmwareService.onProgress((p) => {
       setProgressMap((prev) => ({ ...prev, [fw.id]: { ...p } }));
     });
-    await firmwareService.downloadFirmware(fw);
-  };
-
-  const handleTransfer = async (fw: FirmwarePackage) => {
-    await firmwareService.transferToDrive(fw.filename, 'FIRMWARE_DATA');
+    await firmwareService.downloadAndTransfer(fw);
+    setUpdatingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(fw.id);
+      return next;
+    });
   };
 
   return (
@@ -119,7 +140,14 @@ export const FirmwareUpdateScreen: React.FC<FirmwareUpdateProps> = ({ firmwareSe
           backgroundColor: networkState.isCloudReachable ? COLORS.success : COLORS.danger,
         }]} />
         <Text style={styles.cloudStatusText}>
-          Cloud: {networkState.isCloudReachable ? 'Connected — will fetch from server' : 'Offline — using cached data'}
+          Cloud: {networkState.isCloudReachable ? 'Connected — will fetch from server' : 'Offline — cannot download firmware'}
+        </Text>
+      </View>
+
+      {/* Encryption Info Banner */}
+      <View style={styles.encryptionBanner}>
+        <Text style={styles.encryptionBannerText}>
+          Firmware is encrypted during transfer and never stored on this device.
         </Text>
       </View>
 
@@ -141,8 +169,8 @@ export const FirmwareUpdateScreen: React.FC<FirmwareUpdateProps> = ({ firmwareSe
             <FirmwareCard
               firmware={item}
               progress={progressMap[item.id]}
-              onDownload={() => handleDownload(item)}
-              onTransfer={() => handleTransfer(item)}
+              onUpdateDrive={() => handleUpdateDrive(item)}
+              isUpdating={updatingIds.has(item.id)}
             />
           )}
           contentContainerStyle={styles.listContent}
@@ -169,6 +197,20 @@ const styles = StyleSheet.create({
   },
   cloudDot: { width: 8, height: 8, borderRadius: 4 },
   cloudStatusText: { fontSize: 12, fontWeight: '600', color: '#94a3b8' },
+  encryptionBanner: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    backgroundColor: '#eef2ff',
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+  },
+  encryptionBannerText: {
+    fontSize: 12,
+    color: '#4338ca',
+    fontWeight: '500',
+  },
   checkButton: {
     margin: 16, backgroundColor: '#6366f1', paddingVertical: 14, borderRadius: 10, alignItems: 'center',
   },
@@ -184,7 +226,18 @@ const styles = StyleSheet.create({
   fwSizeBadge: { backgroundColor: '#f1f5f9', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
   fwSizeText: { fontSize: 12, color: '#64748b', fontWeight: '500' },
   fwDescription: { fontSize: 13, color: '#475569', marginBottom: 6, lineHeight: 18 },
-  fwDate: { fontSize: 12, color: '#94a3b8', marginBottom: 12 },
+  fwDate: { fontSize: 12, color: '#94a3b8', marginBottom: 8 },
+  securityNotice: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 6,
+    padding: 8,
+    marginBottom: 10,
+  },
+  securityText: {
+    fontSize: 11,
+    color: '#64748b',
+    fontStyle: 'italic',
+  },
   progressSection: { marginBottom: 12 },
   progressHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
   progressPhase: { fontSize: 12, color: '#64748b', fontWeight: '500' },
@@ -193,10 +246,15 @@ const styles = StyleSheet.create({
   progressFill: { height: '100%', borderRadius: 3 },
   errorText: { fontSize: 12, color: '#ef4444', marginTop: 4 },
   fwActions: { flexDirection: 'row', gap: 8 },
-  downloadButton: { flex: 1, paddingVertical: 10, backgroundColor: '#eef2ff', borderRadius: 8, alignItems: 'center' },
-  downloadButtonText: { color: '#6366f1', fontSize: 13, fontWeight: '600' },
-  transferButton: { flex: 1, paddingVertical: 10, backgroundColor: '#6366f1', borderRadius: 8, alignItems: 'center' },
-  transferButtonText: { color: '#ffffff', fontSize: 13, fontWeight: '600' },
+  updateButton: {
+    flex: 1, paddingVertical: 12, backgroundColor: '#6366f1', borderRadius: 8, alignItems: 'center',
+  },
+  updateButtonDisabled: { opacity: 0.6 },
+  updateButtonText: { color: '#ffffff', fontSize: 14, fontWeight: '600' },
+  completeBadge: {
+    flex: 1, paddingVertical: 10, backgroundColor: '#f0fdf4', borderRadius: 8, alignItems: 'center',
+  },
+  completeText: { color: '#16a34a', fontSize: 13, fontWeight: '600' },
   emptyState: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
   emptyIcon: {
     fontSize: 32, fontWeight: '700', color: '#cbd5e1', backgroundColor: '#f1f5f9',

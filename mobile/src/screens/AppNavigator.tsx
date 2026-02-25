@@ -12,8 +12,10 @@ import { WiFiService } from '../services/WiFiService';
 import { LogsService } from '../services/LogsService';
 import { FirmwareService } from '../services/FirmwareService';
 import { CloudApiService } from '../services/CloudApiService';
+import { SecureStore } from '../services/SecureStore';
 import { NetworkState } from '../types/Network';
 import { COLORS } from '../theme/colors';
+import { initializeSessionKey } from '../utils/crypto';
 
 type ScreenName = 'Dashboard' | 'DeviceList' | 'LogsUpload' | 'FirmwareUpdate' | 'Settings' | 'WiFiSetup';
 
@@ -120,13 +122,21 @@ export const AppNavigator: React.FC = () => {
   const logsService = useMemo(() => new LogsService(), []);
   const firmwareService = useMemo(() => new FirmwareService(), []);
   const wifiService = useMemo(() => new WiFiService(), []);
+  const secureStore = useMemo(() => new SecureStore(), []);
 
   // Wire cloud API and drive comm into services
   useEffect(() => {
     networkService.setCloudApi(cloudApi);
     networkService.setDriveComm(driveComm);
     logsService.setCloudApi(cloudApi);
+    logsService.setSecureStore(secureStore);
     firmwareService.setCloudApi(cloudApi);
+    firmwareService.setDriveComm(driveComm);
+
+    // Initialize encryption key from Android Keystore and load persisted state
+    initializeSessionKey(secureStore).then(() => {
+      logsService.loadPersistedState();
+    });
 
     // Start monitoring cloud connectivity
     networkService.startCloudMonitoring();

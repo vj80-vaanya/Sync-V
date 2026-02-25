@@ -1,5 +1,6 @@
 import { LogsService } from '../src/services/LogsService';
 import { LogFile, LogUploadStatus } from '../src/types/Log';
+import { resetSessionKey } from '../src/utils/crypto';
 
 describe('LogsService', () => {
   let logsService: LogsService;
@@ -11,6 +12,7 @@ describe('LogsService', () => {
 
   beforeEach(() => {
     logsService = new LogsService();
+    resetSessionKey();
   });
 
   test('reads log list from drive', async () => {
@@ -21,6 +23,17 @@ describe('LogsService', () => {
     expect(logs[0].filename).toBe('log1.txt');
   });
 
+  test('encrypts logs on receipt from drive', async () => {
+    logsService.setMockDriveLogs(mockLogs);
+
+    await logsService.getLogsFromDrive();
+
+    // Logs should now be encrypted on-device
+    expect(logsService.isEncryptedOnDevice('log1.txt')).toBe(true);
+    expect(logsService.isEncryptedOnDevice('log2.csv')).toBe(true);
+    expect(logsService.getEncryptedCount()).toBe(2);
+  });
+
   test('triggers upload to cloud', async () => {
     logsService.setMockDriveLogs(mockLogs);
     logsService.setMockCloudAvailable(true);
@@ -28,6 +41,23 @@ describe('LogsService', () => {
     const result = await logsService.uploadToCloud(mockLogs[0]);
     expect(result.success).toBe(true);
     expect(result.status).toBe('uploaded');
+  });
+
+  test('auto-deletes encrypted data after successful upload', async () => {
+    logsService.setMockDriveLogs(mockLogs);
+    logsService.setMockCloudAvailable(true);
+
+    // Get logs to encrypt them
+    await logsService.getLogsFromDrive();
+    expect(logsService.isEncryptedOnDevice('log1.txt')).toBe(true);
+
+    // Upload — should auto-delete
+    await logsService.uploadToCloud(mockLogs[0]);
+    expect(logsService.isEncryptedOnDevice('log1.txt')).toBe(false);
+
+    // Other log still encrypted
+    expect(logsService.isEncryptedOnDevice('log2.csv')).toBe(true);
+    expect(logsService.getEncryptedCount()).toBe(1);
   });
 
   test('queues upload when offline', async () => {
@@ -40,6 +70,18 @@ describe('LogsService', () => {
     const queue = logsService.getUploadQueue();
     expect(queue).toHaveLength(1);
     expect(queue[0].logFile.filename).toBe('log1.txt');
+    expect(queue[0].encrypted).toBe(true);
+  });
+
+  test('keeps encrypted data when offline (not deleted)', async () => {
+    logsService.setMockDriveLogs(mockLogs);
+    logsService.setMockCloudAvailable(false);
+
+    await logsService.getLogsFromDrive();
+    await logsService.uploadToCloud(mockLogs[0]);
+
+    // Data should remain encrypted since upload failed
+    expect(logsService.isEncryptedOnDevice('log1.txt')).toBe(true);
   });
 
   test('retries queued uploads when online', async () => {
@@ -55,6 +97,25 @@ describe('LogsService', () => {
     expect(results.successful).toBe(2);
     expect(results.failed).toBe(0);
     expect(logsService.getUploadQueue()).toHaveLength(0);
+  });
+
+  test('auto-deletes encrypted data when queue processes successfully', async () => {
+    logsService.setMockDriveLogs(mockLogs);
+    logsService.setMockCloudAvailable(false);
+
+    await logsService.getLogsFromDrive();
+    await logsService.uploadToCloud(mockLogs[0]);
+    await logsService.uploadToCloud(mockLogs[1]);
+
+    expect(logsService.getEncryptedCount()).toBe(2);
+
+    logsService.setMockCloudAvailable(true);
+    await logsService.processUploadQueue();
+
+    // Both should be deleted after successful upload
+    expect(logsService.isEncryptedOnDevice('log1.txt')).toBe(false);
+    expect(logsService.isEncryptedOnDevice('log2.csv')).toBe(false);
+    expect(logsService.getEncryptedCount()).toBe(0);
   });
 
   test('tracks per-log status', async () => {

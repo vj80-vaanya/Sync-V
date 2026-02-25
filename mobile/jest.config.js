@@ -11,6 +11,8 @@ module.exports = {
     '^@screens/(.*)$': '<rootDir>/src/screens/$1',
     '^react-native-wifi-reborn$': '<rootDir>/__mocks__/react-native-wifi-reborn',
     '^react-native$': '<rootDir>/__mocks__/react-native',
+    '^expo-secure-store$': '<rootDir>/__mocks__/expo-secure-store',
+    '^expo-file-system$': '<rootDir>/__mocks__/expo-file-system',
   },
   collectCoverageFrom: [
     'src/**/*.{ts,tsx}',
