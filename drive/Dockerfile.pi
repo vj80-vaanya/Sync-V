@@ -1,7 +1,7 @@
 # Multi-stage build: cross-compile for Raspberry Pi Zero W (ARMv6 armhf)
 #
-# Build:  docker build -f Dockerfile.pi -t syncv-drive-pi .
-# Extract: docker run --rm syncv-drive-pi cat /out/syncv-drive > syncv-drive && chmod +x syncv-drive
+# Build:   docker build -f Dockerfile.pi -t syncv-drive-pi .
+# Extract: docker create --name tmp --entrypoint /bin/true syncv-drive-pi && docker cp tmp:/out/syncv-drive ./syncv-drive && docker rm tmp
 # Deploy:  scp syncv-drive pi@<pi-ip>:/home/pi/
 
 # --- Stage 1: Cross-compile ---

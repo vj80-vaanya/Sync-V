@@ -18,5 +18,5 @@ set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 
 # Pi Zero W = ARMv6 with hardware float (armhf)
-set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   -march=armv6zk -mfpu=vfp -mfloat-abi=hard" CACHE STRING "")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv6zk -mfpu=vfp -mfloat-abi=hard" CACHE STRING "")
+set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   -march=armv6zk -marm -mfpu=vfp -mfloat-abi=hard" CACHE STRING "")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv6zk -marm -mfpu=vfp -mfloat-abi=hard" CACHE STRING "")
