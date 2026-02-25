@@ -182,7 +182,7 @@ Data isolation is enforced at the middleware level: JWT tokens carry `orgId`, an
 organizations (id, name, slug UNIQUE, plan, max_devices, max_storage_bytes, max_users, status, timestamps)
 users         (id, username UNIQUE, password_hash, role, org_id FK, created_at, updated_at)
 devices       (id, name, type, status, firmware_version, last_seen, metadata JSON, org_id FK, cluster_id FK, timestamps)
-logs          (id, device_id FK, filename, size, checksum, raw_path, metadata JSON, org_id FK, uploaded_at)
+logs          (id, device_id FK, filename, size, checksum, raw_path, raw_data, vendor, format, metadata JSON, org_id FK, uploaded_at)
 firmware      (id, version, device_type, filename, size, sha256, description, org_id FK, release_date, timestamps)
 device_keys   (device_id PK FK→devices, psk TEXT, created_at, rotated_at)
 
@@ -191,6 +191,11 @@ clusters      (id, org_id FK, name, description, timestamps)
 audit_logs    (id, org_id FK, actor_id, actor_type, action, target_type, target_id, details JSON, ip_address, created_at)
 api_keys      (id, org_id FK, name, key_hash, key_prefix, permissions JSON, last_used_at, created_by, created_at)
 webhooks      (id, org_id FK, url, secret, events JSON, is_active, last_triggered_at, failure_count, created_at)
+
+-- AI tables
+anomalies          (id, device_id FK, org_id FK, type, severity, message, log_id FK, details JSON, resolved, created_at)
+device_health      (device_id PK FK→devices, score, factors JSON, trend, updated_at)
+device_health_history (id, device_id FK, score, created_at)
 ```
 
 - `metadata` fields store heterogeneous device data as JSON strings
@@ -330,8 +335,62 @@ The backend exposes a RESTful API via Express. `createApp(dbPath?)` returns an E
 | `/api/dashboard/firmware` | GET | Firmware status summary |
 | `/api/dashboard/logs` | GET | Log upload history |
 | `/api/dashboard/clusters` | GET | Cluster summary |
+| `/api/dashboard/ai-overview` | GET | Combined AI metrics (health, anomalies) |
 
-### 4.11 Web Admin Dashboards (`public/`)
+#### AI Routes (`requireAuth('viewer')` + `requireOrgAccess`)
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/api/ai/anomalies` | GET | Paginated anomalies `?page=1&limit=50` |
+| `/api/ai/anomalies/device/:id` | GET | Anomalies for a device |
+| `/api/ai/anomalies/:id/resolve` | POST | Mark anomaly resolved |
+| `/api/ai/health` | GET | Fleet health scores (paginated with `?page&limit`) |
+| `/api/ai/health/:deviceId` | GET | Device health + 30-day history |
+| `/api/ai/health/refresh` | POST | Recompute fleet health (rate-limited: 60s cooldown) |
+| `/api/ai/summary/:logId` | GET | Log AI summary (auto-computed on first request) |
+
+#### WebSocket
+| Endpoint | Description |
+|----------|-------------|
+| `ws://host/ws?token=JWT` | Real-time alerts. Broadcasts `anomaly.detected` and `health.updated` events scoped to org. Ping/pong heartbeat. |
+
+### 4.11 AI Services
+
+#### 4.11.1 AnomalyDetectionService
+Detects four anomaly types:
+- **Error spike**: Error rate > 2x historical average for the device (severity by magnitude: >10x critical, >5x high, >3x medium, else low)
+- **New pattern**: Error strings never seen in device's previous logs (severity: medium)
+- **Device silence**: No log upload in > 3x average interval (severity: high)
+- **Volume anomaly**: Today's log count > 3 standard deviations from 7-day average (severity: medium)
+
+#### 4.11.2 DeviceHealthService
+Composite 0–100 health score from 5 weighted factors:
+- Recency (25pts): Based on device status and last_seen timestamp
+- Error rate (25pts): Error keyword frequency across recent logs
+- Log frequency (20pts): Ratio of time-since-last-log to average interval
+- Firmware currency (15pts): How many versions behind latest
+- Anomaly count (15pts): Unresolved anomalies (−5pts each)
+
+Trend computed from 24-hour score delta: improving (>+5), degrading (<−5), or stable.
+
+#### 4.11.3 LogSummaryService
+Analyzes raw log content to produce: line/error/warn/info counts, error rate, top errors and warnings (by frequency), extracted keywords (IPs, error codes, device IDs), timespan, and a human-readable one-liner. Stored in log `metadata.ai_summary`.
+
+#### 4.11.4 Scheduler
+Three `node-cron` jobs running in production:
+- Every 15 min: `checkDeviceSilence()` per active org
+- Every 1 hour: `checkVolumeAnomaly()` per active org
+- Every 6 hours: `computeAllHealth()` per active org
+
+Detected anomalies dispatched via webhooks and WebSocket broadcasts.
+
+#### 4.11.5 WebSocketService
+- Attaches to HTTP server at `/ws` path
+- JWT authentication via `?token=` query parameter
+- Connections mapped to orgId — broadcasts scoped to org
+- Ping/pong heartbeat every 30s, dead connections terminated
+- Methods: `broadcastAnomaly(orgId, anomaly)`, `broadcastHealthUpdate(orgId, results)`
+
+### 4.12 Web Admin Dashboards (`public/`)
 
 Multi-page web dashboards served by `express.static` at `/dashboard`. No build step — vanilla HTML/CSS/JS using `fetch()` to call the REST API.
 
@@ -350,6 +409,7 @@ Multi-page web dashboards served by `express.static` at `/dashboard`. No build s
 | Webhooks | `webhooks.html` | Webhook configuration: URL, events, test |
 | Audit Log | `audit.html` | Org audit log with date/action filters |
 | Usage | `usage.html` | Quota usage dashboard with progress bars |
+| AI Insights | `ai.html` | Anomaly list, health scores, log summaries |
 
 #### Platform Dashboard (`public/platform/`)
 | Page | File | Purpose |
@@ -392,11 +452,11 @@ Multi-page web dashboards served by `express.static` at `/dashboard`. No build s
 | Multi-tenancy   | Org isolation via org_id + middleware  | Implemented |
 | Platform boundary| Platform admin blocked from org data  | Implemented |
 | Audit logging   | All operations logged per org         | Implemented |
-| Cloud rate limit| Sliding window per client          | Implemented   |
+| Cloud rate limit| Sliding window per client + per-org refresh cooldown | Implemented   |
 | Cloud decryption| PSK lookup by deviceId → AES-256-CBC decrypt → store plaintext | Implemented |
 | Input validation| SHA256 format, filename, device ID | Implemented   |
 | TLS/HTTPS       | Not yet (Stage 2)                  | Planned       |
-| Password storage| bcrypt (currently SHA256 for dev)  | Planned       |
+| Password storage| Argon2id                           | Implemented   |
 | Cert pinning    | Mobile → Cloud TLS pinning         | Planned       |
 | Webhook signing | HMAC-SHA256 for webhook payloads   | Implemented   |
 | Quota enforcement| Per-org resource limits            | Implemented   |
@@ -413,13 +473,27 @@ Mobile never holds a PSK and cannot decrypt any log data. It stores, forwards, a
 
 ---
 
-## 7. Stage 2 Extension Points
+## 7. Stage 2 Status & Future Extension Points
 
+### Implemented (Stage 2)
+| Feature | Status |
+|---------|--------|
+| AI anomaly detection (error spike, new pattern, silence, volume) | Implemented |
+| Device health scoring (5-factor, 0-100, with trend) | Implemented |
+| Log summarization (error/warn counts, keywords, one-liner) | Implemented |
+| Periodic scheduling (silence 15m, volume 1h, health 6h) | Implemented |
+| Real-time WebSocket alerts (anomaly + health broadcasts) | Implemented |
+| Rate limiting on expensive endpoints | Implemented |
+| Paginated list endpoints | Implemented |
+| AI web dashboard page | Implemented |
+| AI seed/demo data | Implemented |
+
+### Future Extensions
 | Extension              | Integration Point                                         |
 |------------------------|-----------------------------------------------------------|
-| AI anomaly detection   | Read from `logs` table metadata; add `/ai/anomalies` route |
-| Predictive maintenance | Read from `devices` table; add `/ai/predictions` route     |
+| ML-based anomaly detection | Replace rule-based with trained models on historical data |
+| Predictive maintenance | Read from `devices` + `device_health_history`; add `/ai/predictions` route |
 | Edge AI on Drive       | Add parser module to MetadataExtractor registry            |
-| Real-time streaming    | Add WebSocket endpoint to backend                          |
 | Production database    | Swap SQLite for PostgreSQL; same model interfaces          |
 | TLS on Drive Wi-Fi     | Wrap WiFiServer with mbedTLS                               |
+| Persistent webhook retry | Add retry queue with backoff for failed deliveries       |

@@ -10,7 +10,7 @@ Sync-V is an industrial IoT data pipeline that moves data between field devices,
 Device <---> [Sync-V Drive] <--Wi-Fi--> [Mobile App] <--Internet--> [Cloud Backend]
 ```
 
-**Stage 1** (this codebase) handles secure log collection with E2E encryption, firmware distribution, and fleet metadata. It is deployable independently — AI processing (Stage 2) plugs in later without refactoring.
+**Stage 1** delivered secure log collection with E2E encryption, firmware distribution, and fleet metadata. **Stage 2** (current) adds AI-powered anomaly detection, device health scoring, log summarization, periodic scheduling, real-time WebSocket alerts, and production hardening (rate limiting, pagination).
 
 **E2E encryption model**: Drive encrypts with AES-256-CBC using a per-device pre-shared key (PSK). Mobile is a dumb router — stores/forwards opaque encrypted blobs without any key access. Cloud decrypts using the device's PSK from a `device_keys` table.
 
@@ -91,6 +91,8 @@ cd integration && npm install && npx jest
 | `models/ApiKey.ts`                | API key CRUD (SHA256 hashed)       |
 | `models/Webhook.ts`               | Webhook config + failure tracking  |
 | `models/DeviceKey.ts`             | Per-device PSK CRUD (device_keys)  |
+| `models/Anomaly.ts`              | Anomaly record CRUD + pagination   |
+| `models/DeviceHealth.ts`         | Device health scores + history     |
 | `services/DeviceRegistry.ts`      | Device registration + queries      |
 | `services/LogIngestion.ts`        | Log upload + E2E decryption + dedup|
 | `services/FirmwareDistribution.ts`| Firmware versioning + distribution |
@@ -99,6 +101,11 @@ cd integration && npm install && npx jest
 | `services/WebhookDispatcher.ts`   | HMAC-signed webhook delivery       |
 | `services/QuotaService.ts`        | Per-org resource limit enforcement |
 | `services/PlatformDashboardService.ts` | Cross-org platform stats      |
+| `services/AnomalyDetectionService.ts` | Error spike, new pattern, silence, volume anomaly detection |
+| `services/DeviceHealthService.ts` | 5-factor health scoring (0-100) + trend |
+| `services/LogSummaryService.ts`   | Log analysis: error/warn counts, keywords, one-liner |
+| `services/Scheduler.ts`          | Cron-based periodic checks (silence 15m, volume 1h, health 6h) |
+| `services/WebSocketService.ts`   | JWT-auth WS connections, org-scoped anomaly/health broadcasts |
 | `utils/encryption.ts`             | AES-256-CBC decryption utility     |
 | `utils/validation.ts`             | SHA256/filename/deviceId validators|
 | `routes/auth.ts`                  | Bootstrap, login, register         |
@@ -106,9 +113,10 @@ cd integration && npm install && npx jest
 | `routes/org.ts`                   | Org admin: users, API keys, webhooks |
 | `routes/clusters.ts`              | Cluster CRUD + device assignment   |
 | `routes/devices.ts`               | Device CRUD (org-scoped + quota)   |
-| `routes/logs.ts`                  | Log ingestion (org-scoped)         |
+| `routes/logs.ts`                  | Log ingestion (org-scoped) + AI hooks + WS broadcast |
 | `routes/firmware.ts`              | Firmware distribution (org-scoped) |
-| `routes/dashboard.ts`             | Fleet overview (org-scoped)        |
+| `routes/dashboard.ts`             | Fleet overview + AI overview (org-scoped) |
+| `routes/ai.ts`                   | Anomaly list, health scores, log summaries, rate-limited refresh |
 | `middleware/auth.ts`              | JWT + API key auth, role hierarchy, rate limiter |
 | `middleware/authMiddleware.ts`    | Dual auth middleware, requireOrgAccess, requirePlatformAdmin |
 | `public/`                         | Org admin web dashboard (12 pages) |
@@ -123,41 +131,51 @@ cd integration && npm install && npx jest
 4. **Secure by default**: AES-256-CBC encryption, constant-time hash comparisons, path traversal protection
 5. **Offline-first mobile**: Upload queue with retry; works without cloud connectivity
 6. **Two-phase firmware**: Download from cloud and deliver to drive are separate user actions — works across connectivity gaps
-7. **Raw + metadata separation**: Logs stored as raw files with separate checksum records — AI can index metadata without touching raw data
+7. **Raw + metadata separation**: Logs stored as raw files with separate checksum records — AI indexes metadata without touching raw data
 8. **No external crypto deps in Drive**: Pure SHA256 and AES implementations for embedded portability
 9. **Multi-tenant isolation**: All data tables have `org_id` FK. JWT tokens carry orgId. All queries filter by org. Platform admin cannot access org-sensitive data.
 10. **Dual authentication**: JWT tokens for interactive users + API keys (`svk_` prefix) for programmatic access, both resolved in the same middleware
 11. **Quota enforcement**: Per-org resource limits (devices, storage, users) by plan tier, enforced before create operations
 12. **Audit trail**: All significant operations logged with actor, action, target, and IP. Platform admin sees structural events only; org admin sees all org events.
 13. **Webhook delivery**: HMAC-SHA256 signed payloads, auto-disable after 10 consecutive failures
+14. **AI on backend only**: Anomaly detection, health scoring, and log summarization run server-side. Mobile is a field tool — no AI UI.
+15. **Periodic scheduling**: Cron jobs for device silence checks, volume anomaly detection, and fleet health recomputation
+16. **Real-time WebSocket alerts**: JWT-authenticated org-scoped connections for live anomaly and health update broadcasts
+17. **Rate limiting on expensive ops**: Health refresh endpoint has 60s per-org cooldown to prevent abuse
+18. **Paginated list endpoints**: Anomalies and health scores return `{ data, total, page, limit }` for scalability
 
 ## Test Coverage
 
 | Module      | Suites | Tests | Statement Coverage |
 |-------------|--------|-------|--------------------|
 | Drive (C++) | 7      | ~56   | N/A (GoogleTest)   |
-| Mobile      | 11     | 119   | ~96%               |
-| Backend     | 29     | 386   | ~85%               |
+| Mobile      | 11     | 119   | ~69%               |
+| Backend     | 35     | 459   | ~86%               |
 | Integration | 5      | 23    | N/A (cross-module) |
 
-Backend test categories: model CRUD, service logic, route handlers, auth/permissions, org isolation, quota enforcement, webhook dispatch.
+Backend test categories: model CRUD, service logic, route handlers, auth/permissions, org isolation, quota enforcement, webhook dispatch, AI anomaly detection, device health scoring, log summarization, scheduler, WebSocket.
 
-## Stage 2 Integration Points
+## Stage 2 Features (Implemented)
 
-When adding AI processing later:
-- Read from the same `logs` and `devices` tables
-- Add `/ai/anomalies` and `/ai/predictions` endpoints to backend
-- Drive's `MetadataExtractor` can host an edge AI parser module
-- Cloud `LogIngestion` already indexes metadata for AI queries
+- **Anomaly detection**: Error spike detection (2x+ historical avg), new error pattern detection, device silence alerts, log volume anomaly (3-sigma)
+- **Device health scoring**: 5-factor composite score (recency 25pts, error rate 25pts, log frequency 20pts, firmware currency 15pts, anomaly count 15pts) with trend tracking
+- **Log summarization**: Line/error/warn counts, error rate, top errors/warnings, keyword extraction, timespan, one-liner summary — stored in log metadata
+- **Periodic scheduler**: `node-cron` jobs — silence check (15m), volume anomaly (1h), fleet health recompute (6h)
+- **WebSocket alerts**: Real-time `anomaly.detected` and `health.updated` broadcasts to JWT-authenticated org-scoped connections
+- **Rate limiting**: 60s cooldown on `/api/ai/health/refresh` per org
+- **Pagination**: `GET /api/ai/anomalies?page=1&limit=50` and `GET /api/ai/health?page=1&limit=50`
+- **AI dashboard**: Web UI page (`/dashboard/ai.html`) and API endpoint (`/api/dashboard/ai-overview`)
+- **Seed data**: Demo anomalies, health scores, log summaries, and `anomaly.detected` webhook
 
-## Known Limitations (Stage 1)
+## Known Limitations
 
 - Mobile services use mock implementations for network I/O (real HTTP/USB not yet wired)
-- Password hashing uses SHA256 (swap to bcrypt for production)
-- No HTTPS/TLS on Drive Wi-Fi server (add in Stage 2)
+- Password hashing uses Argon2id (production-ready)
+- No HTTPS/TLS on Drive Wi-Fi server
 - No certificate pinning on mobile → cloud HTTPS connection
 - SQLite for dev only — swap to PostgreSQL for production fleet scale
 - Webhook delivery is fire-and-forget (no persistent retry queue)
+- AI processing is rule-based (no ML models) — suitable for deterministic industrial patterns
 
 ## PlantUML Diagrams (`mobile/docs/`)
 

@@ -78,7 +78,7 @@ npx jest --coverage
 npx jest --watch
 ```
 
-Expected: 5 test suites, 43 tests passing, ~96% statement coverage.
+Expected: 11 test suites, 119 tests passing, ~69% statement coverage.
 
 ### Backend (TypeScript)
 
@@ -92,7 +92,7 @@ npx jest --coverage
 npx tsc --noEmit
 ```
 
-Expected: 12 test suites, 131 tests passing, ~93% statement coverage.
+Expected: 35 test suites, 459 tests passing, ~86% statement coverage.
 
 ### Integration Tests
 
@@ -177,6 +177,21 @@ Environment variables:
 - `PORT` — Server port (default: 3000)
 - `JWT_SECRET` — JWT signing secret (default: dev secret)
 - `DB_PATH` — SQLite file path (default: `:memory:`)
+- `SEED_DEMO_DATA` — Set to `true` to seed demo data on startup (Docker/Railway)
+
+### Seeding Demo Data
+
+```bash
+cd backend
+npx tsc && node dist/seed.js
+```
+
+This creates:
+- **Platform admin**: `platform-admin` / `admin123`
+- **Acme Industries** (pro plan): admin (`admin`/`admin123`), technician (`tech1`/`tech123`), viewer (`viewer1`/`viewer123`)
+- 4 devices, 8 logs, 2 firmware packages, 2 clusters
+- 3 AI anomalies, 4 health scores, 8 log summaries, 1 webhook (`anomaly.detected` + `log.uploaded`)
+- **Beta Corp** (free plan): admin (`beta-admin`/`beta123`)
 
 ### REST API Quick Reference
 
@@ -266,14 +281,55 @@ app.listen(3000);
 
 ### Web Admin Dashboard
 
-The backend includes a built-in web dashboard at `/dashboard`.
+The backend includes built-in web dashboards at `/dashboard` and `/dashboard/platform/`.
 
 1. Start the server: `node dist/index.js`
 2. Open `http://localhost:3000/` in your browser (redirects to `/dashboard/`)
-3. Login with a registered user
-4. Navigate between: **Overview** (fleet stats), **Devices** (list + filters), **Logs** (browser), **Firmware** (management + upload)
+3. Login with an org user (e.g. `admin` / `admin123`)
+4. Navigate between: **Overview**, **Devices**, **Logs**, **Firmware**, **AI Insights**, **Clusters**, **Team**, **Webhooks**, **Audit**, **Usage**
 
-The dashboard uses the same REST API endpoints and JWT authentication as the mobile app.
+#### Platform Admin Dashboard
+
+1. Open `http://localhost:3000/dashboard/platform/`
+2. Login with the platform admin (e.g. `platform-admin` / `admin123`)
+3. Manage organizations, users, quotas, and view platform-wide audit logs
+
+The dashboards use the same REST API endpoints and JWT authentication as the mobile app.
+
+### AI Endpoints
+
+```bash
+# List anomalies (paginated)
+curl "http://localhost:3000/api/ai/anomalies?page=1&limit=10" -H "Authorization: Bearer $TOKEN"
+
+# Resolve an anomaly
+curl -X POST http://localhost:3000/api/ai/anomalies/<id>/resolve -H "Authorization: Bearer $TOKEN"
+
+# Get fleet health scores
+curl http://localhost:3000/api/ai/health -H "Authorization: Bearer $TOKEN"
+
+# Refresh health scores (rate-limited: 60s cooldown)
+curl -X POST http://localhost:3000/api/ai/health/refresh -H "Authorization: Bearer $TOKEN"
+
+# Get log AI summary
+curl http://localhost:3000/api/ai/summary/<logId> -H "Authorization: Bearer $TOKEN"
+
+# Get AI overview (avg health, anomaly counts, attention needed)
+curl http://localhost:3000/api/dashboard/ai-overview -H "Authorization: Bearer $TOKEN"
+```
+
+### WebSocket Real-Time Alerts
+
+Connect to receive live anomaly and health update notifications:
+
+```javascript
+const ws = new WebSocket('ws://localhost:3000/ws?token=<JWT>');
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  // msg.type: 'connected' | 'anomaly.detected' | 'health.updated'
+  console.log(msg.type, msg.data);
+};
+```
 
 ---
 
