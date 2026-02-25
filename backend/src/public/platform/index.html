@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sync-V - Platform Admin Login</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/dashboard/css/style.css">
+</head>
+<body>
+  <div class="login-wrapper">
+    <button class="theme-toggle login-theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme" id="login-theme-btn"></button>
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="login-logo" id="login-logo"></div>
+        <h1>Sync-V</h1>
+        <p>Platform Administration</p>
+      </div>
+
+      <form id="login-form">
+        <div class="form-group">
+          <label for="username">Username</label>
+          <input type="text" id="username" placeholder="Enter admin username" autocomplete="username" required>
+        </div>
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input type="password" id="password" placeholder="Enter password" autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="login-btn" id="login-btn">Sign In</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="/dashboard/js/app.js"></script>
+  <script>
+    // Insert brand logo into login page
+    document.getElementById('login-logo').innerHTML = '<span class="logo-icon logo-icon-login">' + BRAND_LOGO + '</span>';
+
+    // Init theme toggle on login page
+    var loginTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+    updateThemeButtons(loginTheme);
+
+    // Add footer
+    renderFooter();
+
+    // Platform auth helpers — separate from org dashboard (cookie-based)
+    var PLATFORM_AUTH = {
+      USER_KEY: 'platform_user',
+
+      getUser: function() { try { return JSON.parse(localStorage.getItem(this.USER_KEY)); } catch(e) { return null; } },
+      setUser: function(user) { localStorage.setItem(this.USER_KEY, JSON.stringify(user)); },
+      isLoggedIn: function() { return !!this.getUser(); },
+
+      logout: function() {
+        fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(function(){});
+        localStorage.removeItem(this.USER_KEY);
+        window.location.href = '/dashboard/platform/';
+      },
+
+      login: function(token, user) {
+        // Cookie already set by server response (httpOnly)
+        this.setUser(user);
+        window.location.href = '/dashboard/platform/overview.html';
+      }
+    };
+
+    // Auto-redirect if already logged in
+    if (PLATFORM_AUTH.isLoggedIn()) {
+      window.location.href = '/dashboard/platform/overview.html';
+    }
+
+    document.getElementById('login-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      var btn = document.getElementById('login-btn');
+      var username = document.getElementById('username').value.trim();
+      var password = document.getElementById('password').value;
+
+      btn.disabled = true;
+      btn.textContent = 'Signing in...';
+
+      try {
+        var res = await fetch(window.location.origin + '/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: username, password: password }),
+          credentials: 'same-origin'
+        });
+
+        var data = await res.json();
+
+        if (res.ok) {
+          PLATFORM_AUTH.login(data.token, data.user);
+        } else {
+          showToast(data.error || 'Login failed', 'error');
+        }
+      } catch (err) {
+        showToast('Connection error. Is the server running?', 'error');
+      }
+
+      btn.disabled = false;
+      btn.textContent = 'Sign In';
+    });
+  </script>
+</body>
+</html>

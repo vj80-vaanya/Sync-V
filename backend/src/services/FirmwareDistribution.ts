@@ -22,6 +22,7 @@ export class FirmwareDistributionService {
     size: number;
     sha256: string;
     description?: string;
+    orgId?: string;
   }): FirmwareUploadResult {
     if (!isValidSha256(input.sha256)) {
       return { success: false, error: 'Invalid SHA256 hash' };
@@ -44,6 +45,7 @@ export class FirmwareDistributionService {
       size: input.size,
       sha256: input.sha256,
       description: input.description,
+      org_id: input.orgId,
     };
 
     this.model.create(firmware);
@@ -54,8 +56,16 @@ export class FirmwareDistributionService {
     return this.model.getByDeviceType(deviceType);
   }
 
+  getAvailableForDeviceAndOrg(deviceType: string, orgId: string): FirmwareRecord[] {
+    return this.model.getByDeviceTypeAndOrg(deviceType, orgId);
+  }
+
   getLatestForDevice(deviceType: string): FirmwareRecord | undefined {
     return this.model.getLatestForDeviceType(deviceType);
+  }
+
+  getLatestForDeviceAndOrg(deviceType: string, orgId: string): FirmwareRecord | undefined {
+    return this.model.getLatestByOrg(deviceType, orgId);
   }
 
   getFirmware(id: string): FirmwareRecord | undefined {
@@ -73,5 +83,9 @@ export class FirmwareDistributionService {
 
   getAllFirmware(): FirmwareRecord[] {
     return this.model.getAll();
+  }
+
+  getAllFirmwareByOrg(orgId: string): FirmwareRecord[] {
+    return this.model.getAllByOrg(orgId);
   }
 }

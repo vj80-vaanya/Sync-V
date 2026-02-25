@@ -1,4 +1,4 @@
-import { AuthService, RateLimiter } from '../src/middleware/auth';
+import { AuthService, RateLimiter, FailedLoginTracker } from '../src/middleware/auth';
 
 describe('Auth Service', () => {
   let authService: AuthService;
@@ -12,7 +12,7 @@ describe('Auth Service', () => {
     const token = authService.generateToken({
       userId: 'user-1',
       username: 'admin',
-      role: 'admin',
+      role: 'org_admin',
     });
 
     expect(token).toBeTruthy();
@@ -44,7 +44,7 @@ describe('Auth Service', () => {
     const token = shortLived.generateToken({
       userId: 'user-1',
       username: 'admin',
-      role: 'admin',
+      role: 'org_admin',
     });
 
     // Token should be expired immediately
@@ -52,16 +52,30 @@ describe('Auth Service', () => {
     expect(payload).toBeNull();
   });
 
-  test('enforces role-based access - admin has full access', () => {
+  test('enforces role-based access - platform_admin has full structural access', () => {
     const token = authService.generateToken({
       userId: 'user-1',
-      username: 'admin',
-      role: 'admin',
+      username: 'padmin',
+      role: 'platform_admin',
     });
 
     expect(authService.hasRole(token, 'viewer')).toBe(true);
     expect(authService.hasRole(token, 'technician')).toBe(true);
-    expect(authService.hasRole(token, 'admin')).toBe(true);
+    expect(authService.hasRole(token, 'org_admin')).toBe(true);
+    expect(authService.hasRole(token, 'platform_admin')).toBe(true);
+  });
+
+  test('enforces role-based access - org_admin has org-level access', () => {
+    const token = authService.generateToken({
+      userId: 'user-1',
+      username: 'admin',
+      role: 'org_admin',
+    });
+
+    expect(authService.hasRole(token, 'viewer')).toBe(true);
+    expect(authService.hasRole(token, 'technician')).toBe(true);
+    expect(authService.hasRole(token, 'org_admin')).toBe(true);
+    expect(authService.hasRole(token, 'platform_admin')).toBe(false);
   });
 
   test('enforces role-based access - technician limited', () => {
@@ -73,7 +87,7 @@ describe('Auth Service', () => {
 
     expect(authService.hasRole(token, 'viewer')).toBe(true);
     expect(authService.hasRole(token, 'technician')).toBe(true);
-    expect(authService.hasRole(token, 'admin')).toBe(false);
+    expect(authService.hasRole(token, 'org_admin')).toBe(false);
   });
 
   test('enforces role-based access - viewer most limited', () => {
@@ -85,20 +99,30 @@ describe('Auth Service', () => {
 
     expect(authService.hasRole(token, 'viewer')).toBe(true);
     expect(authService.hasRole(token, 'technician')).toBe(false);
-    expect(authService.hasRole(token, 'admin')).toBe(false);
+    expect(authService.hasRole(token, 'org_admin')).toBe(false);
   });
 
   test('rejects role check with invalid token', () => {
     expect(authService.hasRole('bad-token', 'viewer')).toBe(false);
   });
 
-  test('hashes and verifies password', () => {
+  test('hashes and verifies password with bcrypt', () => {
     const password = 'securePassword123!';
     const hash = authService.hashPassword(password);
 
+    expect(hash).toMatch(/^\$2[ab]\$/);
     expect(hash).not.toBe(password);
     expect(authService.verifyPassword(password, hash)).toBe(true);
     expect(authService.verifyPassword('wrong', hash)).toBe(false);
+  });
+
+  test('verifies legacy SHA256 password hashes', () => {
+    const crypto = require('crypto');
+    const password = 'legacyPass';
+    const sha256Hash = crypto.createHash('sha256').update(password).digest('hex');
+
+    expect(authService.verifyPassword(password, sha256Hash)).toBe(true);
+    expect(authService.verifyPassword('wrong', sha256Hash)).toBe(false);
   });
 });
 
@@ -140,5 +164,42 @@ describe('Rate Limiter', () => {
 
     limiter.reset('client-1');
     expect(limiter.isAllowed('client-1')).toBe(true);
+  });
+});
+
+describe('Failed Login Tracker', () => {
+  test('allows login under threshold', () => {
+    const tracker = new FailedLoginTracker(3, 60000, 60000);
+    expect(tracker.isLocked('user1')).toBe(false);
+    tracker.recordFailure('user1');
+    tracker.recordFailure('user1');
+    expect(tracker.isLocked('user1')).toBe(false);
+    expect(tracker.getRemainingAttempts('user1')).toBe(1);
+  });
+
+  test('locks after max failures', () => {
+    const tracker = new FailedLoginTracker(3, 60000, 60000);
+    tracker.recordFailure('user1');
+    tracker.recordFailure('user1');
+    tracker.recordFailure('user1');
+    expect(tracker.isLocked('user1')).toBe(true);
+    expect(tracker.getRemainingAttempts('user1')).toBe(0);
+  });
+
+  test('resets on success', () => {
+    const tracker = new FailedLoginTracker(3, 60000, 60000);
+    tracker.recordFailure('user1');
+    tracker.recordFailure('user1');
+    tracker.recordSuccess('user1');
+    expect(tracker.isLocked('user1')).toBe(false);
+    expect(tracker.getRemainingAttempts('user1')).toBe(3);
+  });
+
+  test('tracks keys independently', () => {
+    const tracker = new FailedLoginTracker(2, 60000, 60000);
+    tracker.recordFailure('user1');
+    tracker.recordFailure('user1');
+    expect(tracker.isLocked('user1')).toBe(true);
+    expect(tracker.isLocked('user2')).toBe(false);
   });
 });

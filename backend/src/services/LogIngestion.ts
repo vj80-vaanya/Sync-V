@@ -29,6 +29,7 @@ export class LogIngestionService {
     vendor?: string;
     format?: string;
     metadata?: Record<string, string>;
+    orgId?: string;
   }): IngestionResult {
     // Validate checksum format (must be valid hex SHA256)
     if (!isValidSha256(input.checksum)) {
@@ -100,6 +101,7 @@ export class LogIngestionService {
       vendor: input.vendor || 'unknown',
       format: input.format || 'text',
       metadata: input.metadata,
+      org_id: input.orgId,
     };
 
     this.model.create(logRecord);
@@ -110,8 +112,16 @@ export class LogIngestionService {
     return this.model.getByDeviceIdSummary(deviceId);
   }
 
+  getLogsByDeviceAndOrg(deviceId: string, orgId: string): LogSummary[] {
+    return this.model.getByDeviceIdSummaryAndOrg(deviceId, orgId);
+  }
+
   getAllLogs(): LogSummary[] {
     return this.model.getAllSummary();
+  }
+
+  getAllLogsByOrg(orgId: string): LogSummary[] {
+    return this.model.getAllSummaryByOrg(orgId);
   }
 
   getLogById(logId: string): LogRecord | undefined {

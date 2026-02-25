@@ -1,11 +1,12 @@
-/* Sync-V Dashboard — API Fetch Wrapper */
+/* Sync-V Dashboard — API Fetch Wrapper (cookie-based auth) */
 
 async function api(path, options) {
-  const token = AUTH.getToken();
   const headers = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = 'Bearer ' + token;
-
-  const config = Object.assign({}, options || {}, { headers: headers });
+  // No Authorization header needed — httpOnly cookie sent automatically
+  const config = Object.assign({}, options || {}, {
+    headers: headers,
+    credentials: 'same-origin'
+  });
 
   let response;
   try {

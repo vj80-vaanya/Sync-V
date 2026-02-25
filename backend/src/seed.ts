@@ -1,11 +1,12 @@
 import crypto from 'crypto';
+import bcryptjs from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { createDatabase } from './models/Database';
 
 const DB_PATH = process.env.DB_PATH || ':memory:';
 
 function hashPassword(password: string): string {
-  return crypto.createHash('sha256').update(password).digest('hex');
+  return bcryptjs.hashSync(password, 12);
 }
 
 function sha256(content: string): string {
@@ -15,8 +16,8 @@ function sha256(content: string): string {
 function seed(): void {
   const db = createDatabase(DB_PATH);
 
-  // Check idempotency — skip if admin already exists
-  const existing = db.prepare('SELECT id FROM users WHERE username = ?').get('admin');
+  // Check idempotency — skip if platform admin already exists
+  const existing = db.prepare("SELECT id FROM users WHERE role = 'platform_admin'").get();
   if (existing) {
     console.log('Demo data already seeded, skipping.');
     db.close();
@@ -25,28 +26,63 @@ function seed(): void {
 
   const now = new Date().toISOString();
 
-  // --- Admin user ---
+  // --- Platform Admin ---
+  const platformAdminId = uuidv4();
   db.prepare(
-    'INSERT INTO users (id, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)'
-  ).run(uuidv4(), 'admin', hashPassword('admin123'), 'admin', now);
+    'INSERT INTO users (id, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(platformAdminId, 'platform-admin', hashPassword('admin123'), 'platform_admin', now, now);
+
+  // --- Organization ---
+  const orgId = uuidv4();
+  db.prepare(
+    'INSERT INTO organizations (id, name, slug, plan, max_devices, max_storage_bytes, max_users, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(orgId, 'Acme Industries', 'acme', 'pro', 100, 10737418240, 25, 'active', now, now);
+
+  // --- Org Admin ---
+  const orgAdminId = uuidv4();
+  db.prepare(
+    'INSERT INTO users (id, username, password_hash, role, org_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(orgAdminId, 'admin', hashPassword('admin123'), 'org_admin', orgId, now, now);
+
+  // --- Technician ---
+  const techId = uuidv4();
+  db.prepare(
+    'INSERT INTO users (id, username, password_hash, role, org_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(techId, 'tech1', hashPassword('tech123'), 'technician', orgId, now, now);
+
+  // --- Viewer ---
+  const viewerId = uuidv4();
+  db.prepare(
+    'INSERT INTO users (id, username, password_hash, role, org_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(viewerId, 'viewer1', hashPassword('viewer123'), 'viewer', orgId, now, now);
+
+  // --- Clusters ---
+  const cluster1Id = uuidv4();
+  const cluster2Id = uuidv4();
+  db.prepare(
+    'INSERT INTO clusters (id, org_id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(cluster1Id, orgId, 'Pump Station Alpha', 'Primary pump station - Building A', now, now);
+  db.prepare(
+    'INSERT INTO clusters (id, org_id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(cluster2Id, orgId, 'Motor Bay Bravo', 'Secondary motor bay - Building B', now, now);
 
   // --- Devices ---
   const devices = [
-    { id: uuidv4(), name: 'PUMP-001', type: 'typeA', status: 'online', fw: '1.8.2' },
-    { id: uuidv4(), name: 'PUMP-002', type: 'typeA', status: 'online', fw: '1.8.0' },
-    { id: uuidv4(), name: 'MOTOR-001', type: 'typeB', status: 'online', fw: '1.4.1' },
-    { id: uuidv4(), name: 'SENSOR-001', type: 'typeB', status: 'offline', fw: '1.3.0' },
+    { id: uuidv4(), name: 'PUMP-001', type: 'typeA', status: 'online', fw: '1.8.2', cluster: cluster1Id },
+    { id: uuidv4(), name: 'PUMP-002', type: 'typeA', status: 'online', fw: '1.8.0', cluster: cluster1Id },
+    { id: uuidv4(), name: 'MOTOR-001', type: 'typeB', status: 'online', fw: '1.4.1', cluster: cluster2Id },
+    { id: uuidv4(), name: 'SENSOR-001', type: 'typeB', status: 'offline', fw: '1.3.0', cluster: cluster2Id },
   ];
 
   const insertDevice = db.prepare(
-    'INSERT INTO devices (id, name, type, status, firmware_version, last_seen, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO devices (id, name, type, status, firmware_version, last_seen, metadata, org_id, cluster_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   );
   for (const d of devices) {
     const lastSeen = d.status === 'online' ? now : '2026-02-20T08:15:00.000Z';
-    insertDevice.run(d.id, d.name, d.type, d.status, d.fw, lastSeen, '{}', now, now);
+    insertDevice.run(d.id, d.name, d.type, d.status, d.fw, lastSeen, '{}', orgId, d.cluster, now, now);
   }
 
-  // --- Logs with diverse vendors, formats, and actual content ---
+  // --- Logs ---
   const logEntries = [
     {
       deviceIdx: 0, filename: 'pump001-pressure-20260223.log',
@@ -91,7 +127,7 @@ function seed(): void {
   ];
 
   const insertLog = db.prepare(
-    'INSERT INTO logs (id, device_id, filename, size, checksum, raw_path, raw_data, vendor, format, metadata, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO logs (id, device_id, filename, size, checksum, raw_path, raw_data, vendor, format, metadata, org_id, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   );
   for (const entry of logEntries) {
     const checksum = sha256(entry.content);
@@ -106,6 +142,7 @@ function seed(): void {
       entry.vendor,
       entry.format,
       '{}',
+      orgId,
       now
     );
   }
@@ -129,14 +166,33 @@ function seed(): void {
   ];
 
   const insertFirmware = db.prepare(
-    'INSERT INTO firmware (id, version, device_type, filename, size, sha256, description, release_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO firmware (id, version, device_type, filename, size, sha256, description, org_id, release_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   );
   for (const fw of firmwareEntries) {
     const fwHash = sha256(`${fw.filename}-${fw.version}-${fw.size}`);
-    insertFirmware.run(uuidv4(), fw.version, fw.deviceType, fw.filename, fw.size, fwHash, fw.description, now, now);
+    insertFirmware.run(uuidv4(), fw.version, fw.deviceType, fw.filename, fw.size, fwHash, fw.description, orgId, now, now);
   }
 
-  console.log('Demo data seeded: 1 admin user, 4 devices, 8 logs (4 vendors, 5 formats), 2 firmware packages.');
+  // --- Second Organization (for isolation testing) ---
+  const org2Id = uuidv4();
+  db.prepare(
+    'INSERT INTO organizations (id, name, slug, plan, max_devices, max_storage_bytes, max_users, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(org2Id, 'Beta Corp', 'beta-corp', 'free', 5, 104857600, 3, 'active', now, now);
+
+  const org2AdminId = uuidv4();
+  db.prepare(
+    'INSERT INTO users (id, username, password_hash, role, org_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(org2AdminId, 'beta-admin', hashPassword('beta123'), 'org_admin', org2Id, now, now);
+
+  console.log('Demo data seeded:');
+  console.log('  Platform admin: platform-admin/admin123');
+  console.log('  Org "Acme Industries" (pro plan):');
+  console.log('    Org admin: admin/admin123');
+  console.log('    Technician: tech1/tech123');
+  console.log('    Viewer: viewer1/viewer123');
+  console.log('    4 devices, 8 logs, 2 firmware, 2 clusters');
+  console.log('  Org "Beta Corp" (free plan):');
+  console.log('    Org admin: beta-admin/beta123');
   db.close();
 }
 

@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sync-V - Team</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/dashboard/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div id="nav-bar"></div>
+
+  <div class="page">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:8px">
+      <div>
+        <h1 class="page-title" style="margin-bottom:4px">Team Management</h1>
+        <p class="page-subtitle" style="margin-bottom:0">Manage users in your organization</p>
+      </div>
+    </div>
+
+    <!-- Create User Form -->
+    <div class="form-section" id="create-user-section">
+      <h3>Create User</h3>
+      <form id="create-user-form">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Username</label>
+            <input type="text" id="new-username" placeholder="e.g. john.doe" required>
+          </div>
+          <div class="form-group">
+            <label>Password</label>
+            <input type="password" id="new-password" placeholder="Minimum 6 characters" required>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Role</label>
+            <select id="new-role" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;font-family:var(--font-sans);color:var(--text-mid);background:var(--card);outline:none">
+              <option value="technician">Technician</option>
+              <option value="viewer">Viewer</option>
+            </select>
+          </div>
+          <div class="form-group" style="display:flex;align-items:flex-end">
+            <button type="submit" class="btn btn-primary">+ Create User</button>
+          </div>
+        </div>
+      </form>
+    </div>
+
+    <!-- Users Table -->
+    <div class="card">
+      <div class="card-title">Organization Users</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Role</th>
+              <th>Created At</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="users-table"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="/dashboard/js/auth.js"></script>
+  <script src="/dashboard/js/api.js"></script>
+  <script src="/dashboard/js/app.js"></script>
+  <script>
+    if (!AUTH.requireAuth()) throw new Error('Not authenticated');
+
+    // Build extended nav inline
+    (function() {
+      var user = AUTH.getUser();
+      var pages = [
+        { id: 'overview', label: 'Overview', href: '/dashboard/overview.html', icon: ICONS.overview },
+        { id: 'devices', label: 'Devices', href: '/dashboard/devices.html', icon: ICONS.devices },
+        { id: 'clusters', label: 'Clusters', href: '/dashboard/clusters.html', icon: ICONS.firmware },
+        { id: 'logs', label: 'Logs', href: '/dashboard/logs.html', icon: ICONS.logs },
+        { id: 'firmware', label: 'Firmware', href: '/dashboard/firmware.html', icon: ICONS.firmware },
+        { id: 'team', label: 'Team', href: '/dashboard/team.html', icon: ICONS.devices },
+        { id: 'api-keys', label: 'API Keys', href: '/dashboard/api-keys.html', icon: ICONS.firmware },
+        { id: 'webhooks', label: 'Webhooks', href: '/dashboard/webhooks.html', icon: ICONS.logs },
+        { id: 'audit', label: 'Audit', href: '/dashboard/audit.html', icon: ICONS.logs },
+        { id: 'usage', label: 'Usage', href: '/dashboard/usage.html', icon: ICONS.overview }
+      ];
+      var linksHtml = pages.map(function(p) {
+        var cls = p.id === 'team' ? ' class="active"' : '';
+        return '<a href="' + p.href + '"' + cls + '>' + p.icon + ' ' + p.label + '</a>';
+      }).join('');
+      var userName = user ? user.username : '';
+      var userRole = user ? user.role : '';
+      var nav = document.getElementById('nav-bar');
+      nav.className = 'nav-bar';
+      nav.innerHTML =
+        '<div class="nav-brand"><span class="logo-icon logo-icon-nav">' + BRAND_LOGO + '</span><span class="nav-brand-gradient">Sync-V</span></div>' +
+        '<button class="nav-hamburger" onclick="toggleMobileNav()" aria-label="Menu">' + ICONS.hamburger + '</button>' +
+        '<div class="nav-links" id="nav-links">' + linksHtml + '</div>' +
+        '<div class="nav-user">' +
+          '<button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme"></button>' +
+          '<span>' + userName + '</span>' +
+          '<span class="role">' + userRole + '</span>' +
+          '<button class="logout-btn" onclick="AUTH.logout()">' + ICONS.logout + ' Logout</button>' +
+        '</div>';
+      updateThemeButtons(document.documentElement.getAttribute('data-theme') || 'dark');
+    })();
+    renderFooter();
+
+    // Show skeleton loading
+    document.getElementById('users-table').innerHTML = skeletonRows(4, 4);
+
+    function roleBadge(role) {
+      var colorMap = {
+        org_admin: 'background:rgba(139,92,246,0.12);color:#8b5cf6;border:1px solid rgba(139,92,246,0.25)',
+        admin: 'background:rgba(139,92,246,0.12);color:#8b5cf6;border:1px solid rgba(139,92,246,0.25)',
+        technician: 'background:rgba(59,130,246,0.12);color:#3b82f6;border:1px solid rgba(59,130,246,0.25)',
+        viewer: 'background:rgba(34,197,94,0.12);color:#22c55e;border:1px solid rgba(34,197,94,0.25)'
+      };
+      var style = colorMap[role] || colorMap.viewer;
+      return '<span class="badge" style="' + style + '">' + escapeHtml(role) + '</span>';
+    }
+
+    var allUsers = [];
+    var currentUser = AUTH.getUser();
+
+    async function loadUsers() {
+      allUsers = await apiGet('/api/org/users') || [];
+      renderUsers();
+    }
+
+    function renderUsers() {
+      var tbody = document.getElementById('users-table');
+      if (allUsers.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty-state">' +
+          '<div class="empty-icon-circle">' + ICONS.emptyBox + '</div>' +
+          '<h3>No users found</h3></td></tr>';
+        return;
+      }
+      tbody.innerHTML = allUsers.map(function(u) {
+        var isSelf = currentUser && currentUser.username === u.username;
+        var roleSelect = '<select onchange="changeRole(\'' + escapeHtml(u.id || u.username) + '\', this.value)" ' +
+          'style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:var(--font-sans);color:var(--text-mid);background:var(--card);outline:none"' +
+          (isSelf ? ' disabled' : '') + '>' +
+          '<option value="org_admin"' + (u.role === 'org_admin' ? ' selected' : '') + '>org_admin</option>' +
+          '<option value="technician"' + (u.role === 'technician' ? ' selected' : '') + '>technician</option>' +
+          '<option value="viewer"' + (u.role === 'viewer' ? ' selected' : '') + '>viewer</option>' +
+        '</select>';
+
+        var removeBtn = isSelf ? '<span style="color:var(--text-muted);font-size:12px">You</span>' :
+          '<button class="btn btn-danger btn-sm" onclick="removeUser(\'' + escapeHtml(u.id || u.username) + '\', \'' + escapeHtml(u.username) + '\')">' + ICONS.trash + ' Remove</button>';
+
+        return '<tr style="cursor:default">' +
+          '<td><strong>' + escapeHtml(u.username) + '</strong></td>' +
+          '<td>' + roleBadge(u.role) + ' ' + roleSelect + '</td>' +
+          '<td>' + formatDate(u.created_at || u.createdAt) + '</td>' +
+          '<td>' + removeBtn + '</td>' +
+        '</tr>';
+      }).join('');
+      staggerRows('users-table');
+    }
+
+    // Create user
+    document.getElementById('create-user-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      var username = document.getElementById('new-username').value.trim();
+      var password = document.getElementById('new-password').value;
+      var role = document.getElementById('new-role').value;
+
+      if (!username || !password) { showToast('Username and password are required', 'error'); return; }
+      if (password.length < 6) { showToast('Password must be at least 6 characters', 'error'); return; }
+
+      var result = await apiPost('/api/org/users', { username: username, password: password, role: role });
+      if (result && !result.error) {
+        showToast('User created: ' + username, 'success');
+        document.getElementById('create-user-form').reset();
+        loadUsers();
+      } else {
+        showToast((result && result.error) || 'Failed to create user', 'error');
+      }
+    });
+
+    // Change role
+    async function changeRole(userId, newRole) {
+      var result = await apiPatch('/api/org/users/' + encodeURIComponent(userId), { role: newRole });
+      if (result && !result.error) {
+        showToast('Role updated to ' + newRole, 'success');
+        loadUsers();
+      } else {
+        showToast((result && result.error) || 'Failed to update role', 'error');
+        loadUsers(); // Reset the dropdown
+      }
+    }
+
+    // Remove user
+    function removeUser(userId, username) {
+      showConfirmModal(
+        'Remove User',
+        'Are you sure you want to remove "' + username + '"? This action cannot be undone.',
+        async function() {
+          var result = await apiDelete('/api/org/users/' + encodeURIComponent(userId));
+          if (result && !result.error) {
+            showToast('User removed: ' + username, 'success');
+            loadUsers();
+          } else {
+            showToast((result && result.error) || 'Failed to remove user', 'error');
+          }
+        }
+      );
+    }
+
+    loadUsers();
+  </script>
+</body>
+</html>

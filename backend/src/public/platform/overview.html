@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sync-V - Platform Overview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/dashboard/css/style.css">
+</head>
+<body>
+  <div id="nav-bar"></div>
+
+  <div class="page">
+    <h1 class="page-title">Platform Overview</h1>
+    <p class="page-subtitle">Global view of all organizations and resources</p>
+
+    <div class="stats-grid" id="stats-grid"></div>
+
+    <div class="card" style="margin-bottom: 24px">
+      <div class="card-title">Plan Distribution</div>
+      <div id="plan-distribution"><span class="loading">Loading...</span></div>
+    </div>
+  </div>
+
+  <script src="/dashboard/js/app.js"></script>
+  <script>
+    /* ---- Platform Auth ---- */
+    var API_BASE = window.location.origin;
+
+    var PLATFORM_AUTH = {
+      USER_KEY: 'platform_user',
+      getUser: function() { try { return JSON.parse(localStorage.getItem(this.USER_KEY)); } catch(e) { return null; } },
+      isLoggedIn: function() { return !!this.getUser(); },
+      requireAuth: function() {
+        if (!this.isLoggedIn()) { window.location.href = '/dashboard/platform/'; return false; }
+        return true;
+      },
+      logout: function() {
+        fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(function(){});
+        localStorage.removeItem(this.USER_KEY);
+        window.location.href = '/dashboard/platform/';
+      }
+    };
+
+    if (!PLATFORM_AUTH.requireAuth()) throw new Error('Not authenticated');
+
+    /* ---- API helper ---- */
+    async function platformApi(path, options) {
+      var headers = { 'Content-Type': 'application/json' };
+      var config = Object.assign({}, options || {}, { headers: headers, credentials: 'same-origin' });
+      var response;
+      try {
+        response = await fetch(API_BASE + path, config);
+      } catch (err) {
+        showToast('Network error — check your connection', 'error');
+        return null;
+      }
+      if (response.status === 401) {
+        showToast('Session expired — please log in again', 'warning');
+        setTimeout(function() { PLATFORM_AUTH.logout(); }, 1500);
+        return null;
+      }
+      if (response.status >= 500) {
+        showToast('Server error — please try again', 'error');
+      }
+      if (response.status === 204) return null;
+      return response.json();
+    }
+
+    /* ---- Platform Nav ---- */
+    var PLATFORM_ICONS = {
+      overview: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
+      orgs: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
+      audit: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>',
+      logout: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>'
+    };
+
+    function renderPlatformNav(activePage) {
+      var user = PLATFORM_AUTH.getUser();
+      var nav = document.getElementById('nav-bar');
+      if (!nav) return;
+
+      var pages = [
+        { id: 'overview', label: 'Overview', href: '/dashboard/platform/overview.html', icon: PLATFORM_ICONS.overview },
+        { id: 'organizations', label: 'Organizations', href: '/dashboard/platform/organizations.html', icon: PLATFORM_ICONS.orgs },
+        { id: 'audit', label: 'Audit Log', href: '/dashboard/platform/audit.html', icon: PLATFORM_ICONS.audit }
+      ];
+
+      var linksHtml = pages.map(function(p) {
+        var cls = p.id === activePage ? ' class="active"' : '';
+        return '<a href="' + p.href + '"' + cls + '>' + p.icon + ' ' + p.label + '</a>';
+      }).join('');
+
+      var userName = user ? user.username : '';
+      var userRole = user ? (user.role || 'admin') : '';
+
+      nav.className = 'nav-bar';
+      nav.innerHTML =
+        '<div class="nav-brand"><span class="logo-icon logo-icon-nav">' + BRAND_LOGO + '</span><span class="nav-brand-gradient">Sync-V Platform</span></div>' +
+        '<button class="nav-hamburger" onclick="toggleMobileNav()" aria-label="Menu">' + ICONS.hamburger + '</button>' +
+        '<div class="nav-links" id="nav-links">' + linksHtml + '</div>' +
+        '<div class="nav-user">' +
+          '<button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme"></button>' +
+          '<span>' + escapeHtml(userName) + '</span>' +
+          '<span class="role">' + escapeHtml(userRole) + '</span>' +
+          '<button class="logout-btn" onclick="PLATFORM_AUTH.logout()">' + PLATFORM_ICONS.logout + ' Logout</button>' +
+        '</div>';
+
+      var currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+      updateThemeButtons(currentTheme);
+    }
+
+    function toggleMobileNav() {
+      var links = document.getElementById('nav-links');
+      if (links) links.classList.toggle('open');
+    }
+
+    renderPlatformNav('overview');
+    renderFooter();
+
+    // Show skeleton loading for stat cards
+    document.getElementById('stats-grid').innerHTML = skeletonCards(6);
+
+    /* ---- Load Data ---- */
+    async function loadOverview() {
+      var data = await platformApi('/api/platform/overview');
+      if (!data) return;
+
+      var totalOrgs = data.totalOrgs || 0;
+      var activeOrgs = data.activeOrgs || 0;
+      var suspendedOrgs = data.suspendedOrgs || 0;
+      var totalDevices = data.totalDevices || 0;
+      var totalUsers = data.totalUsers || 0;
+      var totalLogs = data.totalLogs || 0;
+
+      document.getElementById('stats-grid').innerHTML =
+        '<div class="stat-card stat-border-indigo">' +
+          '<div class="stat-icon" style="background:var(--primary-50);color:var(--primary)">' +
+            '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>' +
+          '</div>' +
+          '<div class="stat-value" id="counter-total-orgs">' + totalOrgs + '</div>' +
+          '<div class="stat-label">Total Organizations</div>' +
+        '</div>' +
+        '<div class="stat-card stat-border-green">' +
+          '<div class="stat-icon" style="background:var(--success-bg);color:var(--success)">' +
+            '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>' +
+          '</div>' +
+          '<div class="stat-value" style="color:var(--success)" id="counter-active-orgs">' + activeOrgs + '</div>' +
+          '<div class="stat-label">Active Organizations</div>' +
+        '</div>' +
+        '<div class="stat-card stat-border-red">' +
+          '<div class="stat-icon" style="background:var(--danger-bg);color:var(--danger)">' +
+            '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>' +
+          '</div>' +
+          '<div class="stat-value" style="color:var(--danger)" id="counter-suspended-orgs">' + suspendedOrgs + '</div>' +
+          '<div class="stat-label">Suspended</div>' +
+        '</div>' +
+        '<div class="stat-card stat-border-blue">' +
+          '<div class="stat-icon" style="background:#eff6ff;color:#3b82f6">' +
+            '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="12" y2="17"/></svg>' +
+          '</div>' +
+          '<div class="stat-value" style="color:#3b82f6" id="counter-devices">' + totalDevices + '</div>' +
+          '<div class="stat-label">Total Devices</div>' +
+        '</div>' +
+        '<div class="stat-card stat-border-indigo">' +
+          '<div class="stat-icon" style="background:var(--primary-50);color:var(--primary)">' +
+            '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>' +
+          '</div>' +
+          '<div class="stat-value" id="counter-users">' + totalUsers + '</div>' +
+          '<div class="stat-label">Total Users</div>' +
+        '</div>' +
+        '<div class="stat-card stat-border-green">' +
+          '<div class="stat-icon" style="background:var(--success-bg);color:var(--success)">' +
+            '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' +
+          '</div>' +
+          '<div class="stat-value" style="color:var(--success)" id="counter-logs">' + totalLogs + '</div>' +
+          '<div class="stat-label">Total Logs</div>' +
+        '</div>';
+
+      staggerCards('#stats-grid');
+
+      // Animate counters
+      animateCounter(document.getElementById('counter-total-orgs'), totalOrgs);
+      animateCounter(document.getElementById('counter-active-orgs'), activeOrgs);
+      animateCounter(document.getElementById('counter-suspended-orgs'), suspendedOrgs);
+      animateCounter(document.getElementById('counter-devices'), totalDevices);
+      animateCounter(document.getElementById('counter-users'), totalUsers);
+      animateCounter(document.getElementById('counter-logs'), totalLogs, 1500);
+
+      // Plan distribution
+      var planEl = document.getElementById('plan-distribution');
+      var plans = data.planDistribution;
+      if (plans && typeof plans === 'object') {
+        var entries = Object.entries(plans);
+        if (entries.length === 0) {
+          planEl.innerHTML = '<span style="color:var(--text-muted)">No plan data available</span>';
+        } else {
+          var total = entries.reduce(function(sum, e) { return sum + e[1]; }, 0);
+          var planColors = { free: '#94a3b8', starter: '#3b82f6', professional: '#6366f1', enterprise: '#8b5cf6' };
+          planEl.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center">' +
+            entries.map(function(e) {
+              var name = e[0];
+              var count = e[1];
+              var pct = total > 0 ? Math.round((count / total) * 100) : 0;
+              var color = planColors[name.toLowerCase()] || '#6366f1';
+              return '<div style="flex:1;min-width:180px">' +
+                '<div style="display:flex;justify-content:space-between;margin-bottom:6px">' +
+                  '<span style="font-size:14px;font-weight:600;color:var(--text-mid);text-transform:capitalize">' + escapeHtml(name) + '</span>' +
+                  '<span style="font-size:13px;color:var(--text-muted)">' + count + ' (' + pct + '%)</span>' +
+                '</div>' +
+                '<div style="height:8px;background:var(--border-light);border-radius:4px;overflow:hidden">' +
+                  '<div style="height:100%;width:' + pct + '%;background:' + color + ';border-radius:4px;transition:width 0.6s ease"></div>' +
+                '</div>' +
+              '</div>';
+            }).join('') +
+          '</div>';
+        }
+      } else {
+        planEl.innerHTML = '<span style="color:var(--text-muted)">No plan data available</span>';
+      }
+    }
+
+    loadOverview();
+  </script>
+</body>
+</html>

@@ -1,40 +1,62 @@
-import { Router, Request, Response } from 'express';
+import { Router, Response } from 'express';
 import { LogIngestionService } from '../services/LogIngestion';
 import { isValidDeviceId } from '../utils/validation';
+import { AuthenticatedRequest } from '../middleware/authMiddleware';
+import { AuditService } from '../services/AuditService';
+import { WebhookDispatcher } from '../services/WebhookDispatcher';
+import { QuotaService } from '../services/QuotaService';
 
-export function createLogRoutes(logIngestion: LogIngestionService): Router {
+export function createLogRoutes(
+  logIngestion: LogIngestionService,
+  auditService?: AuditService,
+  webhookDispatcher?: WebhookDispatcher,
+  quotaService?: QuotaService,
+): Router {
   const router = Router();
 
   // GET /api/logs — list all logs (summary, no raw_data)
-  router.get('/', (_req: Request, res: Response) => {
-    const logs = logIngestion.getAllLogs();
+  router.get('/', (req: AuthenticatedRequest, res: Response) => {
+    const logs = req.orgId
+      ? logIngestion.getAllLogsByOrg(req.orgId)
+      : logIngestion.getAllLogs();
     res.json(logs);
   });
 
   // GET /api/logs/filters — available vendors and formats for UI dropdowns
-  router.get('/filters', (_req: Request, res: Response) => {
+  router.get('/filters', (_req: AuthenticatedRequest, res: Response) => {
     const vendors = logIngestion.getDistinctVendors();
     const formats = logIngestion.getDistinctFormats();
     res.json({ vendors, formats });
   });
 
   // GET /api/logs/device/:deviceId — get logs for a device (summary)
-  router.get('/device/:deviceId', (req: Request, res: Response) => {
+  router.get('/device/:deviceId', (req: AuthenticatedRequest, res: Response) => {
     const { deviceId } = req.params;
     if (!isValidDeviceId(deviceId)) {
       return res.status(400).json({ error: 'Invalid device ID format' });
     }
 
-    const logs = logIngestion.getLogsByDevice(deviceId);
+    const logs = req.orgId
+      ? logIngestion.getLogsByDeviceAndOrg(deviceId, req.orgId)
+      : logIngestion.getLogsByDevice(deviceId);
     res.json(logs);
   });
 
   // POST /api/logs — ingest a new log
-  router.post('/', (req: Request, res: Response) => {
+  router.post('/', (req: AuthenticatedRequest, res: Response) => {
     const { deviceId, filename, size, checksum, rawData, vendor, format, metadata } = req.body;
 
     if (!deviceId || !filename || !checksum) {
       return res.status(400).json({ error: 'Missing required fields: deviceId, filename, checksum' });
+    }
+
+    // Enforce storage quota
+    if (quotaService && req.orgId) {
+      try {
+        quotaService.enforceStorageQuota(req.orgId);
+      } catch (err: any) {
+        return res.status(403).json({ error: err.message });
+      }
     }
 
     const result = logIngestion.ingest({
@@ -46,17 +68,34 @@ export function createLogRoutes(logIngestion: LogIngestionService): Router {
       vendor,
       format,
       metadata,
+      orgId: req.orgId,
     });
 
     if (!result.success) {
       return res.status(400).json({ error: result.error });
     }
 
+    if (auditService && req.user) {
+      auditService.log({
+        orgId: req.orgId,
+        actorId: req.user.userId,
+        action: 'log.upload',
+        targetType: 'log',
+        targetId: result.logId!,
+        details: { filename, deviceId },
+        ipAddress: req.ip || '',
+      });
+    }
+
+    if (webhookDispatcher && req.orgId) {
+      webhookDispatcher.dispatch(req.orgId, 'log.uploaded', { logId: result.logId, deviceId, filename });
+    }
+
     res.status(201).json({ logId: result.logId });
   });
 
   // GET /api/logs/verify/:logId — verify log integrity
-  router.get('/verify/:logId', (req: Request, res: Response) => {
+  router.get('/verify/:logId', (req: AuthenticatedRequest, res: Response) => {
     const { logId } = req.params;
     const { checksum } = req.query;
 
@@ -69,27 +108,65 @@ export function createLogRoutes(logIngestion: LogIngestionService): Router {
   });
 
   // DELETE /api/logs/:id — delete a log record
-  router.delete('/:id', (req: Request, res: Response) => {
+  router.delete('/:id', (req: AuthenticatedRequest, res: Response) => {
+    const log = logIngestion.getLogById(req.params.id);
+    if (!log) {
+      return res.status(404).json({ error: 'Log not found' });
+    }
+    if (req.orgId && log.org_id !== req.orgId) {
+      return res.status(404).json({ error: 'Log not found' });
+    }
+
     const deleted = logIngestion.deleteLog(req.params.id);
     if (!deleted) {
       return res.status(404).json({ error: 'Log not found' });
     }
+
+    if (auditService && req.user) {
+      auditService.log({
+        orgId: req.orgId,
+        actorId: req.user.userId,
+        action: 'log.delete',
+        targetType: 'log',
+        targetId: req.params.id,
+        ipAddress: req.ip || '',
+      });
+    }
+
     res.json({ success: true });
   });
 
   // GET /api/logs/:id — full log record including raw_data
-  router.get('/:id', (req: Request, res: Response) => {
+  router.get('/:id', (req: AuthenticatedRequest, res: Response) => {
     const log = logIngestion.getLogById(req.params.id);
     if (!log) {
       return res.status(404).json({ error: 'Log not found' });
     }
+    if (req.orgId && log.org_id !== req.orgId) {
+      return res.status(404).json({ error: 'Log not found' });
+    }
+
+    if (auditService && req.user) {
+      auditService.log({
+        orgId: req.orgId,
+        actorId: req.user.userId,
+        action: 'log.view_raw',
+        targetType: 'log',
+        targetId: req.params.id,
+        ipAddress: req.ip || '',
+      });
+    }
+
     res.json(log);
   });
 
   // GET /api/logs/:id/raw — download raw content
-  router.get('/:id/raw', (req: Request, res: Response) => {
+  router.get('/:id/raw', (req: AuthenticatedRequest, res: Response) => {
     const log = logIngestion.getLogById(req.params.id);
     if (!log) {
+      return res.status(404).json({ error: 'Log not found' });
+    }
+    if (req.orgId && log.org_id !== req.orgId) {
       return res.status(404).json({ error: 'Log not found' });
     }
 
@@ -107,7 +184,6 @@ export function createLogRoutes(logIngestion: LogIngestionService): Router {
     res.setHeader('Content-Disposition', `attachment; filename="${log.filename}"`);
 
     if (log.format === 'binary') {
-      // Decode base64 for binary format
       const buf = Buffer.from(log.raw_data, 'base64');
       res.send(buf);
     } else {

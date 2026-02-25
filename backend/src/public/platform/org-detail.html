@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sync-V - Organization Detail</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/dashboard/css/style.css">
+</head>
+<body>
+  <div id="nav-bar"></div>
+
+  <div class="page">
+    <a href="/dashboard/platform/organizations.html" class="back-link">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+      Back to Organizations
+    </a>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-top:16px;margin-bottom:4px">
+      <h1 class="page-title" style="margin-bottom:0" id="org-title">Organization Detail</h1>
+      <div id="action-buttons"></div>
+    </div>
+    <p class="page-subtitle" id="org-subtitle">Loading organization data...</p>
+
+    <!-- Quota Usage -->
+    <div class="stats-grid" id="usage-grid"></div>
+
+    <!-- Org Info -->
+    <div class="detail-grid" id="org-info">
+      <div class="card"><span class="loading">Loading...</span></div>
+      <div class="card"><span class="loading">Loading...</span></div>
+    </div>
+
+    <!-- Edit Form -->
+    <div class="form-section" id="edit-section" style="display:none">
+      <h3>Edit Organization</h3>
+      <form id="edit-form">
+        <div class="form-row">
+          <div>
+            <label for="edit-name">Organization Name</label>
+            <input type="text" id="edit-name" required>
+          </div>
+          <div>
+            <label for="edit-plan">Plan</label>
+            <select id="edit-plan" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;font-family:var(--font-sans);color:var(--text-dark);background:var(--card);outline:none">
+              <option value="free">Free</option>
+              <option value="starter">Starter</option>
+              <option value="professional">Professional</option>
+              <option value="enterprise">Enterprise</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div>
+            <label for="edit-max-devices">Max Devices</label>
+            <input type="number" id="edit-max-devices" min="0">
+          </div>
+          <div>
+            <label for="edit-max-users">Max Users</label>
+            <input type="number" id="edit-max-users" min="0">
+          </div>
+        </div>
+        <div class="form-row full">
+          <div>
+            <label for="edit-max-storage">Max Storage (bytes)</label>
+            <input type="number" id="edit-max-storage" min="0">
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:16px">
+          <button type="submit" class="btn btn-primary" id="save-btn">Save Changes</button>
+          <button type="button" class="btn btn-outline" onclick="cancelEdit()">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/dashboard/js/app.js"></script>
+  <script>
+    /* ---- Platform Auth ---- */
+    var API_BASE = window.location.origin;
+
+    var PLATFORM_AUTH = {
+      USER_KEY: 'platform_user',
+      getUser: function() { try { return JSON.parse(localStorage.getItem(this.USER_KEY)); } catch(e) { return null; } },
+      isLoggedIn: function() { return !!this.getUser(); },
+      requireAuth: function() {
+        if (!this.isLoggedIn()) { window.location.href = '/dashboard/platform/'; return false; }
+        return true;
+      },
+      logout: function() {
+        fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(function(){});
+        localStorage.removeItem(this.USER_KEY);
+        window.location.href = '/dashboard/platform/';
+      }
+    };
+
+    if (!PLATFORM_AUTH.requireAuth()) throw new Error('Not authenticated');
+
+    /* ---- API helper ---- */
+    async function platformApi(path, options) {
+      var headers = { 'Content-Type': 'application/json' };
+      var config = Object.assign({}, options || {}, { headers: headers, credentials: 'same-origin' });
+      var response;
+      try {
+        response = await fetch(API_BASE + path, config);
+      } catch (err) {
+        showToast('Network error — check your connection', 'error');
+        return null;
+      }
+      if (response.status === 401) {
+        showToast('Session expired — please log in again', 'warning');
+        setTimeout(function() { PLATFORM_AUTH.logout(); }, 1500);
+        return null;
+      }
+      if (response.status >= 500) {
+        showToast('Server error — please try again', 'error');
+      }
+      if (response.status === 204) return null;
+      return response.json();
+    }
+
+    /* ---- Platform Nav ---- */
+    var PLATFORM_ICONS = {
+      overview: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
+      orgs: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
+      audit: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>',
+      logout: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>'
+    };
+
+    function renderPlatformNav(activePage) {
+      var user = PLATFORM_AUTH.getUser();
+      var nav = document.getElementById('nav-bar');
+      if (!nav) return;
+
+      var pages = [
+        { id: 'overview', label: 'Overview', href: '/dashboard/platform/overview.html', icon: PLATFORM_ICONS.overview },
+        { id: 'organizations', label: 'Organizations', href: '/dashboard/platform/organizations.html', icon: PLATFORM_ICONS.orgs },
+        { id: 'audit', label: 'Audit Log', href: '/dashboard/platform/audit.html', icon: PLATFORM_ICONS.audit }
+      ];
+
+      var linksHtml = pages.map(function(p) {
+        var cls = p.id === activePage ? ' class="active"' : '';
+        return '<a href="' + p.href + '"' + cls + '>' + p.icon + ' ' + p.label + '</a>';
+      }).join('');
+
+      var userName = user ? user.username : '';
+      var userRole = user ? (user.role || 'admin') : '';
+
+      nav.className = 'nav-bar';
+      nav.innerHTML =
+        '<div class="nav-brand"><span class="logo-icon logo-icon-nav">' + BRAND_LOGO + '</span><span class="nav-brand-gradient">Sync-V Platform</span></div>' +
+        '<button class="nav-hamburger" onclick="toggleMobileNav()" aria-label="Menu">' + ICONS.hamburger + '</button>' +
+        '<div class="nav-links" id="nav-links">' + linksHtml + '</div>' +
+        '<div class="nav-user">' +
+          '<button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme"></button>' +
+          '<span>' + escapeHtml(userName) + '</span>' +
+          '<span class="role">' + escapeHtml(userRole) + '</span>' +
+          '<button class="logout-btn" onclick="PLATFORM_AUTH.logout()">' + PLATFORM_ICONS.logout + ' Logout</button>' +
+        '</div>';
+
+      var currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+      updateThemeButtons(currentTheme);
+    }
+
+    function toggleMobileNav() {
+      var links = document.getElementById('nav-links');
+      if (links) links.classList.toggle('open');
+    }
+
+    renderPlatformNav('organizations');
+    renderFooter();
+
+    /* ---- Get org ID from URL ---- */
+    var params = new URLSearchParams(window.location.search);
+    var orgId = params.get('id');
+    if (!orgId) {
+      showToast('No organization ID provided', 'error');
+      setTimeout(function() { window.location.href = '/dashboard/platform/organizations.html'; }, 1500);
+      throw new Error('No org ID');
+    }
+
+    var currentOrg = null;
+
+    /* ---- Usage bar color helper ---- */
+    function usageBarColor(pct) {
+      if (pct >= 80) return 'var(--danger)';
+      if (pct >= 60) return 'var(--warning)';
+      return 'var(--success)';
+    }
+
+    /* ---- Render usage bars ---- */
+    function renderUsageBars(org) {
+      var storageBytes = org.storage_used_bytes || org.storageUsed || 0;
+      var maxStorage = org.max_storage_bytes || org.maxStorage || 1;
+      var storagePct = maxStorage > 0 ? Math.min(Math.round((storageBytes / maxStorage) * 100), 100) : 0;
+
+      var deviceCount = org.device_count !== undefined ? org.device_count : (org.deviceCount || 0);
+      var maxDevices = org.max_devices || org.maxDevices || 1;
+      var devicePct = maxDevices > 0 ? Math.min(Math.round((deviceCount / maxDevices) * 100), 100) : 0;
+
+      var userCount = org.user_count !== undefined ? org.user_count : (org.userCount || 0);
+      var maxUsers = org.max_users || org.maxUsers || 1;
+      var userPct = maxUsers > 0 ? Math.min(Math.round((userCount / maxUsers) * 100), 100) : 0;
+
+      document.getElementById('usage-grid').innerHTML =
+        '<div class="stat-card">' +
+          '<div class="stat-label" style="margin-bottom:8px">Storage Usage</div>' +
+          '<div class="stat-value" style="font-size:24px">' + formatSize(storageBytes) + '</div>' +
+          '<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">of ' + formatSize(maxStorage) + '</div>' +
+          '<div style="height:8px;background:var(--border-light);border-radius:4px;overflow:hidden">' +
+            '<div style="height:100%;width:' + storagePct + '%;background:' + usageBarColor(storagePct) + ';border-radius:4px;transition:width 0.6s ease"></div>' +
+          '</div>' +
+          '<div style="text-align:right;font-size:12px;color:var(--text-muted);margin-top:4px">' + storagePct + '%</div>' +
+        '</div>' +
+        '<div class="stat-card">' +
+          '<div class="stat-label" style="margin-bottom:8px">Devices</div>' +
+          '<div class="stat-value" style="font-size:24px">' + deviceCount + '</div>' +
+          '<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">of ' + maxDevices + ' max</div>' +
+          '<div style="height:8px;background:var(--border-light);border-radius:4px;overflow:hidden">' +
+            '<div style="height:100%;width:' + devicePct + '%;background:' + usageBarColor(devicePct) + ';border-radius:4px;transition:width 0.6s ease"></div>' +
+          '</div>' +
+          '<div style="text-align:right;font-size:12px;color:var(--text-muted);margin-top:4px">' + devicePct + '%</div>' +
+        '</div>' +
+        '<div class="stat-card">' +
+          '<div class="stat-label" style="margin-bottom:8px">Users</div>' +
+          '<div class="stat-value" style="font-size:24px">' + userCount + '</div>' +
+          '<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">of ' + maxUsers + ' max</div>' +
+          '<div style="height:8px;background:var(--border-light);border-radius:4px;overflow:hidden">' +
+            '<div style="height:100%;width:' + userPct + '%;background:' + usageBarColor(userPct) + ';border-radius:4px;transition:width 0.6s ease"></div>' +
+          '</div>' +
+          '<div style="text-align:right;font-size:12px;color:var(--text-muted);margin-top:4px">' + userPct + '%</div>' +
+        '</div>';
+
+      staggerCards('#usage-grid');
+    }
+
+    /* ---- Render action buttons ---- */
+    function renderActions(org) {
+      var btns = document.getElementById('action-buttons');
+      var isSuspended = org.status === 'suspended';
+
+      btns.innerHTML =
+        '<button class="btn btn-secondary" onclick="showEditForm()" style="margin-right:8px">' +
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' +
+          ' Edit' +
+        '</button>' +
+        (isSuspended ?
+          '<button class="btn btn-primary" onclick="activateOrg()">' +
+            '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>' +
+            ' Activate' +
+          '</button>'
+          :
+          '<button class="btn btn-danger" onclick="suspendOrg()">' +
+            '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>' +
+            ' Suspend' +
+          '</button>'
+        );
+    }
+
+    /* ---- Render org info cards ---- */
+    function renderOrgInfo(org) {
+      var statusBadge = org.status === 'suspended' ?
+        '<span class="badge badge-danger"><span class="badge-dot"></span>Suspended</span>' :
+        '<span class="badge badge-success"><span class="badge-dot"></span>Active</span>';
+
+      var planColorMap = { free: 'muted', starter: 'info', professional: 'success', enterprise: 'warning' };
+      var planCls = planColorMap[(org.plan || '').toLowerCase()] || 'muted';
+      var planBadge = '<span class="badge badge-' + planCls + '" style="text-transform:capitalize">' + escapeHtml(org.plan || 'free') + '</span>';
+
+      document.getElementById('org-info').innerHTML =
+        '<div class="card">' +
+          '<div class="card-title">Organization Info</div>' +
+          '<div class="detail-row"><span class="detail-key">Name</span><span class="detail-value">' + escapeHtml(org.name) + '</span></div>' +
+          '<div class="detail-row"><span class="detail-key">Slug</span><span class="detail-value"><span class="text-mono">' + escapeHtml(org.slug) + '</span></span></div>' +
+          '<div class="detail-row"><span class="detail-key">Status</span><span class="detail-value">' + statusBadge + '</span></div>' +
+          '<div class="detail-row"><span class="detail-key">Plan</span><span class="detail-value">' + planBadge + '</span></div>' +
+          '<div class="detail-row"><span class="detail-key">Created</span><span class="detail-value">' + formatDate(org.created_at || org.createdAt) + '</span></div>' +
+        '</div>' +
+        '<div class="card">' +
+          '<div class="card-title">Quota Limits</div>' +
+          '<div class="detail-row"><span class="detail-key">Max Devices</span><span class="detail-value">' + (org.max_devices || org.maxDevices || 'N/A') + '</span></div>' +
+          '<div class="detail-row"><span class="detail-key">Max Users</span><span class="detail-value">' + (org.max_users || org.maxUsers || 'N/A') + '</span></div>' +
+          '<div class="detail-row"><span class="detail-key">Max Storage</span><span class="detail-value">' + formatSize(org.max_storage_bytes || org.maxStorage || 0) + '</span></div>' +
+          '<div class="detail-row"><span class="detail-key">Device Count</span><span class="detail-value">' + (org.device_count !== undefined ? org.device_count : (org.deviceCount || 0)) + '</span></div>' +
+          '<div class="detail-row"><span class="detail-key">User Count</span><span class="detail-value">' + (org.user_count !== undefined ? org.user_count : (org.userCount || 0)) + '</span></div>' +
+        '</div>';
+    }
+
+    /* ---- Edit form ---- */
+    function showEditForm() {
+      if (!currentOrg) return;
+      document.getElementById('edit-section').style.display = 'block';
+      document.getElementById('edit-name').value = currentOrg.name || '';
+      document.getElementById('edit-plan').value = currentOrg.plan || 'free';
+      document.getElementById('edit-max-devices').value = currentOrg.max_devices || currentOrg.maxDevices || '';
+      document.getElementById('edit-max-users').value = currentOrg.max_users || currentOrg.maxUsers || '';
+      document.getElementById('edit-max-storage').value = currentOrg.max_storage_bytes || currentOrg.maxStorage || '';
+      document.getElementById('edit-name').focus();
+    }
+
+    function cancelEdit() {
+      document.getElementById('edit-section').style.display = 'none';
+    }
+
+    document.getElementById('edit-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      var btn = document.getElementById('save-btn');
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
+
+      var body = {
+        name: document.getElementById('edit-name').value.trim(),
+        plan: document.getElementById('edit-plan').value,
+        max_devices: parseInt(document.getElementById('edit-max-devices').value) || undefined,
+        max_storage_bytes: parseInt(document.getElementById('edit-max-storage').value) || undefined,
+        max_users: parseInt(document.getElementById('edit-max-users').value) || undefined
+      };
+
+      var result = await platformApi('/api/platform/organizations/' + encodeURIComponent(orgId), {
+        method: 'PATCH',
+        body: JSON.stringify(body)
+      });
+
+      btn.disabled = false;
+      btn.textContent = 'Save Changes';
+
+      if (result && !result.error) {
+        showToast('Organization updated', 'success');
+        cancelEdit();
+        loadOrgDetail();
+      } else if (result && result.error) {
+        showToast(result.error, 'error');
+      }
+    });
+
+    /* ---- Suspend / Activate ---- */
+    async function suspendOrg() {
+      if (!confirm('Are you sure you want to suspend this organization?')) return;
+
+      var result = await platformApi('/api/platform/organizations/' + encodeURIComponent(orgId) + '/suspend', {
+        method: 'PATCH'
+      });
+
+      if (result && !result.error) {
+        showToast('Organization suspended', 'success');
+        loadOrgDetail();
+      } else if (result && result.error) {
+        showToast(result.error, 'error');
+      }
+    }
+
+    async function activateOrg() {
+      var result = await platformApi('/api/platform/organizations/' + encodeURIComponent(orgId) + '/activate', {
+        method: 'PATCH'
+      });
+
+      if (result && !result.error) {
+        showToast('Organization activated', 'success');
+        loadOrgDetail();
+      } else if (result && result.error) {
+        showToast(result.error, 'error');
+      }
+    }
+
+    /* ---- Load org detail ---- */
+    async function loadOrgDetail() {
+      var data = await platformApi('/api/platform/organizations/' + encodeURIComponent(orgId));
+      if (!data) return;
+
+      // API may return { organization: {...} } or the org directly
+      var org = data.organization || data;
+      currentOrg = org;
+
+      document.title = 'Sync-V - ' + (org.name || 'Organization');
+      document.getElementById('org-title').textContent = org.name || 'Organization';
+      document.getElementById('org-subtitle').textContent = org.slug ? 'Slug: ' + org.slug : '';
+
+      renderActions(org);
+      renderUsageBars(org);
+      renderOrgInfo(org);
+    }
+
+    loadOrgDetail();
+  </script>
+</body>
+</html>

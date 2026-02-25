@@ -1,9 +1,13 @@
 import jwt from 'jsonwebtoken';
+import bcryptjs from 'bcryptjs';
 
 export interface TokenPayload {
   userId: string;
   username: string;
-  role: 'admin' | 'technician' | 'viewer';
+  role: 'platform_admin' | 'org_admin' | 'technician' | 'viewer';
+  orgId?: string;
+  authType?: 'jwt' | 'api_key';
+  permissions?: string[];
 }
 
 export class AuthService {
@@ -47,9 +51,12 @@ export class AuthService {
     if (!payload) return false;
 
     const roleHierarchy: Record<string, number> = {
-      admin: 3,
+      platform_admin: 4,
+      org_admin: 3,
       technician: 2,
       viewer: 1,
+      // Legacy compatibility
+      admin: 3,
     };
 
     const userLevel = roleHierarchy[payload.role] || 0;
@@ -59,13 +66,17 @@ export class AuthService {
   }
 
   hashPassword(password: string): string {
-    // Simple hash for dev purposes. In production use bcrypt.
-    const crypto = require('crypto');
-    return crypto.createHash('sha256').update(password).digest('hex');
+    return bcryptjs.hashSync(password, 12);
   }
 
   verifyPassword(password: string, hash: string): boolean {
-    return this.hashPassword(password) === hash;
+    // Support legacy SHA256 hashes during migration
+    if (!hash.startsWith('$2a$') && !hash.startsWith('$2b$')) {
+      const crypto = require('crypto');
+      const sha256 = crypto.createHash('sha256').update(password).digest('hex');
+      return sha256 === hash;
+    }
+    return bcryptjs.compareSync(password, hash);
   }
 }
 
@@ -98,5 +109,59 @@ export class RateLimiter {
 
   reset(clientId: string): void {
     this.requests.delete(clientId);
+  }
+}
+
+export class FailedLoginTracker {
+  private attempts: Map<string, { count: number; firstAttempt: number; lockedUntil: number }> = new Map();
+  private maxAttempts: number;
+  private windowMs: number;
+  private lockoutMs: number;
+
+  constructor(maxAttempts: number = 5, windowMs: number = 15 * 60 * 1000, lockoutMs: number = 15 * 60 * 1000) {
+    this.maxAttempts = maxAttempts;
+    this.windowMs = windowMs;
+    this.lockoutMs = lockoutMs;
+  }
+
+  isLocked(key: string): boolean {
+    const entry = this.attempts.get(key);
+    if (!entry) return false;
+    const now = Date.now();
+    if (entry.lockedUntil > 0 && now < entry.lockedUntil) return true;
+    if (entry.lockedUntil > 0 && now >= entry.lockedUntil) {
+      this.attempts.delete(key);
+      return false;
+    }
+    if (now - entry.firstAttempt > this.windowMs) {
+      this.attempts.delete(key);
+      return false;
+    }
+    return false;
+  }
+
+  recordFailure(key: string): void {
+    const now = Date.now();
+    const entry = this.attempts.get(key);
+    if (!entry || now - entry.firstAttempt > this.windowMs) {
+      this.attempts.set(key, { count: 1, firstAttempt: now, lockedUntil: 0 });
+      return;
+    }
+    entry.count++;
+    if (entry.count >= this.maxAttempts) {
+      entry.lockedUntil = now + this.lockoutMs;
+    }
+    this.attempts.set(key, entry);
+  }
+
+  recordSuccess(key: string): void {
+    this.attempts.delete(key);
+  }
+
+  getRemainingAttempts(key: string): number {
+    const entry = this.attempts.get(key);
+    if (!entry) return this.maxAttempts;
+    if (Date.now() - entry.firstAttempt > this.windowMs) return this.maxAttempts;
+    return Math.max(0, this.maxAttempts - entry.count);
   }
 }

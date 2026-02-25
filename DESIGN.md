@@ -11,20 +11,23 @@ Sync-V is a three-tier industrial IoT pipeline for secure data transfer between 
 │  PLC,     │     │  (C++ on    │     │  (React  │     │  (Node.js │
 │  motor)   │     │   Pi2W)     │     │  Native) │     │  +SQLite) │
 └──────────┘     └─────────────┘     └──────────┘     └───────────┘
-                  ▲ Encrypted         ▲ Wi-Fi           ▲ HTTPS
-                  ▲ at rest           ▲ local            ▲ Internet
+                  ▲ AES-256-CBC       ▲ Opaque blob     ▲ HTTPS
+                  ▲ E2E encrypt       ▲ passthrough      ▲ Decrypt
 ```
 
 ### Data Flows
 
-**A. Log Collection (field → cloud)**
+**A. Log Collection — E2E Encrypted (field → cloud)**
 ```
-Device → Drive (collect + hash + encrypt) → Mobile (fetch over Wi-Fi) → Cloud (upload + index)
+Device → Drive (collect + AES-256-CBC encrypt with per-device PSK)
+       → Mobile (fetch opaque base64 blob over Wi-Fi — NO decryption)
+       → Cloud (receive blob + look up PSK by deviceId + decrypt + store plaintext)
 ```
 
-**B. Firmware Updates (cloud → field)**
+**B. Firmware Updates — Two-Phase (cloud → field)**
 ```
-Cloud (signed package) → Mobile (download) → Drive (verify + apply) → Device
+Phase 1: Cloud → Mobile (download firmware, store locally)
+Phase 2: Mobile → Drive (deliver when connected, delete local copy on success)
 ```
 
 ---
@@ -72,10 +75,13 @@ The drive runs on resource-constrained hardware (Raspberry Pi Zero 2W or similar
   - Rejects `..`, `/`, `\`, null bytes, drive letters, hidden files
   - Resolves paths via `std::filesystem::weakly_canonical` to verify containment
 - **Authentication**: Pre-shared token with constant-time comparison. Token must be >= 16 characters.
+- **E2E Encryption**: When an encryption key is configured via `setEncryptionKey(hexKey)`, all file content returned by `getFileContent()` is encrypted with AES-256-CBC (random IV) and base64-encoded before serving. Mobile receives opaque blobs — never plaintext. Without a key, raw data is returned (backwards-compatible).
 - **API**:
   - `getFileList()` → list of available files
-  - `getFileContent(filename)` → file data
+  - `getFileContent(filename)` → encrypted base64 blob (or raw if no key)
   - `receiveFirmware(filename, data)` → store incoming firmware
+  - `setEncryptionKey(hexKey)` → enable AES-256-CBC encryption
+  - `isEncryptionEnabled()` → check if encryption is active
 
 ### 2.6 FirmwareReceiver
 - **Purpose**: Staged firmware receive → verify → apply workflow.
@@ -122,17 +128,22 @@ AppNavigator
 - Firmware transfer to drive
 - Custom `DriveConnectionError` for connection failure handling
 
-### 3.4 LogsService
-- **Offline queue**: When cloud is unreachable, uploads are queued with retry tracking
-- **Queue processing**: `processUploadQueue()` with per-item attempt counting
+### 3.4 LogsService (Opaque Blob Router)
+- **E2E passthrough**: Receives pre-encrypted base64 blobs from drive — no decryption, no key access
+- **Storage**: Opaque blobs persisted to SecureStore filesystem with metadata only (filename, size, deviceId)
+- **Upload**: Forwards `{ deviceId, rawData: "<base64 blob>" }` to cloud — cloud decrypts server-side
+- **Checksum**: SHA256 computed on the encrypted blob (not plaintext) for deduplication
+- **Offline queue**: When cloud is unreachable, uploads are queued with retry tracking (max 3 attempts)
+- **Auto-delete**: Blobs permanently deleted from device after successful cloud upload
 - **Status tracking**: Per-log status (`pending → uploading → uploaded → purged`)
-- **Purge safety**: Only uploaded logs can be purged
 
-### 3.5 FirmwareService
-- Update availability check by device type + current version
-- Download with progress callbacks
-- Transfer to drive with progress callbacks
-- SHA256 integrity verification
+### 3.5 FirmwareService (Two-Phase Delivery)
+- **Phase 1 — Download**: `downloadFirmware(pkg)` fetches from cloud `GET /api/firmware/:id/download`, stores locally
+- **Phase 2 — Deliver**: `deliverToDrive(pkg)` sends stored firmware to drive, deletes local copy on success
+- **Separation**: Download and deliver are independent actions — user controls when each happens
+- **Failure handling**: Local copy preserved if drive transfer fails; retry without re-download
+- **Progress callbacks**: Tracks downloading, transferring, and complete phases
+- **SHA256 integrity verification**: Validates firmware hash before transfer
 
 ### 3.6 MetadataParserRegistry
 - Same extensible pattern as Drive's C++ extractor
@@ -151,99 +162,205 @@ AppNavigator
 
 ## 4. Cloud Backend (Node.js + TypeScript + SQLite)
 
-### 4.1 Database Schema
+### 4.1 Multi-Tenancy Architecture
+
+The backend is a multi-tenant platform with organization isolation. Every data record is scoped to an organization via `org_id` foreign keys.
+
+**Role hierarchy**: `platform_admin (4) > org_admin (3) > technician (2) > viewer (1)`
+
+- **Platform admin**: Manages organizations, plans, and quotas. **Cannot** access org-sensitive data (logs, firmware, PSK).
+- **Org admin**: Full control within their organization — users, devices, clusters, API keys, webhooks.
+- **Technician**: Field operations — log upload, firmware update, device registration.
+- **Viewer**: Read-only dashboard access within their organization.
+
+Data isolation is enforced at the middleware level: JWT tokens carry `orgId`, and all model queries filter by it. The `requireOrgAccess` middleware blocks platform admins from org-data routes. The `requirePlatformAdmin` middleware restricts platform management routes.
+
+### 4.2 Database Schema
 
 ```sql
-devices (id, name, type, status, firmware_version, last_seen, metadata JSON, timestamps)
-logs    (id, device_id FK, filename, size, checksum, raw_path, metadata JSON, uploaded_at)
-firmware(id, version, device_type, filename, size, sha256, description, release_date, timestamps)
-users   (id, username UNIQUE, password_hash, role, created_at)
+-- Core tables
+organizations (id, name, slug UNIQUE, plan, max_devices, max_storage_bytes, max_users, status, timestamps)
+users         (id, username UNIQUE, password_hash, role, org_id FK, created_at, updated_at)
+devices       (id, name, type, status, firmware_version, last_seen, metadata JSON, org_id FK, cluster_id FK, timestamps)
+logs          (id, device_id FK, filename, size, checksum, raw_path, metadata JSON, org_id FK, uploaded_at)
+firmware      (id, version, device_type, filename, size, sha256, description, org_id FK, release_date, timestamps)
+device_keys   (device_id PK FK→devices, psk TEXT, created_at, rotated_at)
+
+-- Multi-tenant tables
+clusters      (id, org_id FK, name, description, timestamps)
+audit_logs    (id, org_id FK, actor_id, actor_type, action, target_type, target_id, details JSON, ip_address, created_at)
+api_keys      (id, org_id FK, name, key_hash, key_prefix, permissions JSON, last_used_at, created_by, created_at)
+webhooks      (id, org_id FK, url, secret, events JSON, is_active, last_triggered_at, failure_count, created_at)
 ```
 
 - `metadata` fields store heterogeneous device data as JSON strings
-- `raw_path` separates log storage location from metadata — AI can index metadata without touching raw files
+- `raw_path` separates log storage location from metadata — AI can index metadata without touching raw data
+- `device_keys` stores per-device pre-shared keys (PSK) for E2E decryption — write-only (never returned in API responses)
+- `org_id` on all data tables enforces tenant isolation
+- `clusters` groups devices within an organization for fleet management
 
-### 4.2 DeviceRegistry Service
+### 4.3 DeviceRegistry Service
 - Register devices with type, status, firmware version, and arbitrary metadata
 - Query by type, status, or ID
 - Merge-update metadata (existing fields preserved, new fields added)
 
-### 4.3 LogIngestion Service
+### 4.4 LogIngestion Service (E2E Decryption)
 - Validates: SHA256 format (regex: `/^[0-9a-f]{64}$/`), filename safety, positive size
+- **E2E decryption**: On ingest, looks up PSK by `deviceId` in `device_keys` table. If PSK exists and payload passes `isEncryptedPayload()`, decrypts AES-256-CBC → stores plaintext. Checksum recomputed from plaintext.
+- **Backwards-compatible**: If no PSK or payload isn't encrypted, stores data as-is
+- **Graceful failure**: If decryption throws (wrong key, corrupted data), falls back to storing raw data
 - Deduplicates by checksum
-- Stores raw path reference + metadata separately
 - Integrity verification by log ID + checksum
 
-### 4.4 FirmwareDistribution Service
+### 4.5 FirmwareDistribution Service
 - Upload signed firmware packages with version + device type
 - Query available firmware by device type
 - Get latest version per device type (ordered by release_date DESC, rowid DESC)
 - Download verification by ID + SHA256
 
-### 4.5 Auth & Authorization
-- **JWT-based**: Tokens with configurable expiry (default 24h)
-- **Role hierarchy**: `admin (3) > technician (2) > viewer (1)` — higher roles inherit lower permissions
+### 4.6 Auth & Authorization
+- **Dual auth**: JWT tokens + API keys (`svk_` prefix, SHA256-hashed for storage)
+- **Role hierarchy**: `platform_admin (4) > org_admin (3) > technician (2) > viewer (1)` — higher roles inherit lower permissions
+- **Org isolation**: JWT tokens carry `orgId`; all queries filter by it; `requireOrgAccess` middleware blocks platform admins from org data
+- **Bootstrap**: `POST /api/auth/bootstrap` creates the first platform admin (one-time, only when no users exist)
 - **Password hashing**: SHA256 for dev (replace with bcrypt for production)
 - **Rate limiter**: Sliding window per client ID, configurable max requests and window size
 
-### 4.6 Dashboard Service
-- Fleet overview: total/online/offline devices, total logs, device types
+### 4.7 Dashboard Service
+- Fleet overview: total/online/offline devices, total logs, device types (org-scoped)
 - Per-device detail: device record + log count + recent logs
 - Firmware status summary: counts by device type
 - Log upload history: ordered by upload time
+- Cluster dashboard: cluster detail with device count, online count, recent logs
 
-### 4.7 Input Validation (`utils/validation.ts`)
+### 4.8 Platform Services
+- **AuditService**: Logs all operations (user, device, firmware, PSK, cluster, webhook, API key events). Platform admin sees structural events only; org admin sees all org events.
+- **WebhookDispatcher**: HMAC-SHA256 signed HTTP POST to registered URLs on events (device.online, log.uploaded, firmware.uploaded, psk.rotated, quota.warning, etc.). Auto-disables after 10 consecutive failures.
+- **QuotaService**: Enforces per-org limits (devices, storage, users) based on plan tier (free/pro/enterprise). Fires `quota.warning` at 80% and `quota.exceeded` at 100%.
+- **PlatformDashboardService**: Cross-org aggregation — total orgs, devices, users, plan distribution, per-org usage summaries with quota percentages.
+
+### 4.9 Input Validation (`utils/validation.ts`)
 - `isValidSha256(hash)` — regex validation for hex SHA256
 - `isValidDeviceId(id)` — alphanumeric + hyphens/underscores, max 128 chars
 - `isValidFilename(filename)` — rejects traversal, separators, null bytes, drive letters
 
-### 4.8 Express REST API (`index.ts` + `routes/`)
+### 4.10 Express REST API (`index.ts` + `routes/`)
 
 The backend exposes a RESTful API via Express. `createApp(dbPath?)` returns an Express app + database handle for both production use and testing.
 
-**Middleware chain**: JSON body parser (10MB limit) → Rate limiter → Auth (per-route)
+**Middleware chain**: JSON body parser (10MB limit) → Rate limiter → Auth (per-route) → Org scoping
 
-| Route                                   | Method | Auth      | Description                     |
-|-----------------------------------------|--------|-----------|---------------------------------|
-| `/health`                               | GET    | None      | Health check                    |
-| `/api/auth/login`                       | POST   | None      | Authenticate, get JWT           |
-| `/api/auth/register`                    | POST   | Optional  | Register new user               |
-| `/api/devices`                          | GET    | viewer+   | List all devices                |
-| `/api/devices`                          | POST   | viewer+   | Register a device               |
-| `/api/devices/type/:type`               | GET    | viewer+   | Filter devices by type          |
-| `/api/devices/status/:status`           | GET    | viewer+   | Filter devices by status        |
-| `/api/devices/:id`                      | GET    | viewer+   | Get device by ID                |
-| `/api/devices/:id/metadata`             | PATCH  | viewer+   | Update device metadata          |
-| `/api/devices/:id/status`               | PATCH  | viewer+   | Update device status            |
-| `/api/logs`                             | GET    | viewer+   | List all logs                   |
-| `/api/logs`                             | POST   | viewer+   | Ingest a log                    |
-| `/api/logs/device/:deviceId`            | GET    | viewer+   | Logs for a device               |
-| `/api/logs/verify/:logId?checksum=`     | GET    | viewer+   | Verify log integrity            |
-| `/api/firmware`                         | GET    | viewer+   | List all firmware               |
-| `/api/firmware`                         | POST   | tech+     | Upload firmware package         |
-| `/api/firmware/device/:type`            | GET    | viewer+   | Firmware for device type        |
-| `/api/firmware/device/:type/latest`     | GET    | viewer+   | Latest firmware for type        |
-| `/api/firmware/verify/:id?sha256=`      | GET    | viewer+   | Verify firmware integrity       |
-| `/api/firmware/:id`                     | GET    | viewer+   | Get firmware by ID              |
-| `/api/dashboard/overview`               | GET    | viewer+   | Fleet overview                  |
-| `/api/dashboard/device/:id`             | GET    | viewer+   | Device detail with logs         |
-| `/api/dashboard/firmware`               | GET    | viewer+   | Firmware status summary         |
-| `/api/dashboard/logs`                   | GET    | viewer+   | Log upload history              |
+#### Public Routes
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/health` | GET | Health check |
+| `/api/auth/bootstrap` | POST | Create first platform admin (one-time) |
+| `/api/auth/login` | POST | Authenticate, get JWT with orgId |
 
-### 4.9 Web Admin Dashboard (`public/`)
+#### Platform Admin Routes (`requirePlatformAdmin`)
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/api/platform/overview` | GET | Platform-wide stats |
+| `/api/platform/organizations` | GET/POST | List/create organizations |
+| `/api/platform/organizations/:id` | GET/PATCH/DELETE | Org detail/update/delete |
+| `/api/platform/organizations/:id/suspend` | PATCH | Suspend org |
+| `/api/platform/organizations/:id/activate` | PATCH | Reactivate org |
+| `/api/platform/organizations/:id/users` | POST | Create user in org |
+| `/api/platform/audit` | GET | Structural audit events |
 
-A multi-page web dashboard served by `express.static` at `/dashboard`. No build step — vanilla HTML/CSS/JS using `fetch()` to call the existing REST API.
+#### Org Admin Routes (`requireAuth('org_admin')`)
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/api/org/users` | GET/POST | List/create team members |
+| `/api/org/users/:userId` | PATCH/DELETE | Update role/remove user |
+| `/api/org/api-keys` | GET/POST | List/create API keys |
+| `/api/org/api-keys/:keyId` | DELETE | Revoke API key |
+| `/api/org/webhooks` | GET/POST | List/create webhooks |
+| `/api/org/webhooks/:id` | PATCH/DELETE | Update/delete webhook |
+| `/api/org/audit` | GET | Org audit log |
+| `/api/org/usage` | GET | Quota usage summary |
+| `/api/auth/register` | POST | Register user in own org |
 
+#### Cluster Routes (`requireAuth('viewer')`, org-scoped)
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/api/clusters` | GET/POST | List/create clusters |
+| `/api/clusters/:id` | GET/PATCH/DELETE | Cluster detail/update/delete |
+| `/api/clusters/:id/devices` | POST | Assign devices |
+| `/api/clusters/:id/devices/:deviceId` | DELETE | Remove device |
+| `/api/clusters/:id/dashboard` | GET | Cluster dashboard |
+
+#### Device Routes (`requireAuth('viewer')`, org-scoped)
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/api/devices` | GET/POST | List/register devices |
+| `/api/devices/type/:type` | GET | Filter by type |
+| `/api/devices/status/:status` | GET | Filter by status |
+| `/api/devices/:id` | GET | Get device by ID |
+| `/api/devices/:id/metadata` | PATCH | Update metadata |
+| `/api/devices/:id/status` | PATCH | Update status |
+| `/api/devices/:id/psk` | PATCH/DELETE | Set/rotate/revoke PSK |
+
+#### Log Routes (`requireAuth('viewer')` + `requireOrgAccess`)
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/api/logs` | GET/POST | List/ingest logs |
+| `/api/logs/:id` | GET | Get log by ID |
+| `/api/logs/:id/raw` | GET | Download raw content |
+| `/api/logs/device/:deviceId` | GET | Logs for a device |
+| `/api/logs/filters` | GET | Available filter values |
+| `/api/logs/verify/:logId` | GET | Verify integrity |
+
+#### Firmware Routes (`requireAuth('viewer')` + `requireOrgAccess`)
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/api/firmware` | GET/POST | List/upload firmware |
+| `/api/firmware/device/:type` | GET | Firmware for device type |
+| `/api/firmware/device/:type/latest` | GET | Latest firmware |
+| `/api/firmware/verify/:id` | GET | Verify integrity |
+| `/api/firmware/:id` | GET | Get firmware by ID |
+| `/api/firmware/:id/download` | GET | Download firmware (base64) |
+| `/api/firmware/:id` | DELETE | Delete firmware |
+
+#### Dashboard Routes (`requireAuth('viewer')` + `requireOrgAccess`)
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/api/dashboard/overview` | GET | Fleet overview (org-scoped) |
+| `/api/dashboard/device/:id` | GET | Device detail with logs |
+| `/api/dashboard/firmware` | GET | Firmware status summary |
+| `/api/dashboard/logs` | GET | Log upload history |
+| `/api/dashboard/clusters` | GET | Cluster summary |
+
+### 4.11 Web Admin Dashboards (`public/`)
+
+Multi-page web dashboards served by `express.static` at `/dashboard`. No build step — vanilla HTML/CSS/JS using `fetch()` to call the REST API.
+
+#### Org Dashboard (`public/`)
 | Page | File | Purpose |
 |------|------|---------|
 | Login | `index.html` | JWT authentication, auto-redirect |
-| Overview | `overview.html` | Fleet stats: device/log/firmware counts |
-| Devices | `devices.html` | Device list with type/status filters |
+| Overview | `overview.html` | Fleet stats with cluster summary + quota usage |
+| Devices | `devices.html` | Device list with type/status/cluster filters |
 | Device Detail | `device-detail.html` | Single device metadata + recent logs |
 | Logs | `logs.html` | Log browser with device filter, pagination |
 | Firmware | `firmware.html` | Firmware list + upload form (admin/tech) |
+| Clusters | `clusters.html` | Cluster management + device assignment |
+| Team | `team.html` | User management: create, role change, remove |
+| API Keys | `api-keys.html` | API key management: create (show once), revoke |
+| Webhooks | `webhooks.html` | Webhook configuration: URL, events, test |
+| Audit Log | `audit.html` | Org audit log with date/action filters |
+| Usage | `usage.html` | Quota usage dashboard with progress bars |
 
-**Design**: Indigo (#6366f1) primary, slate grays, white cards with 12px radius — matches mobile app.
+#### Platform Dashboard (`public/platform/`)
+| Page | File | Purpose |
+|------|------|---------|
+| Login | `index.html` | Platform admin login |
+| Overview | `overview.html` | Total orgs, devices, users, plan distribution |
+| Organizations | `organizations.html` | Org list with usage bars, create/edit |
+| Org Detail | `org-detail.html` | Single org: quotas, user count, device count |
+| Audit Log | `audit.html` | Structural audit log with date filters |
+
+**Design**: Indigo (#6366f1) primary, slate grays, white cards with 12px radius — matches mobile app. Quota bars: green < 60%, amber < 80%, red >= 80%.
 **Auth**: JWT in localStorage, `Bearer` header on all API calls, auto-logout on 401.
 
 ---
@@ -264,15 +381,35 @@ A multi-page web dashboard served by `express.static` at `/dashboard`. No build 
 
 | Layer           | Mechanism                          | Status        |
 |-----------------|------------------------------------|---------------|
+| **E2E encryption** | **Drive encrypts (AES-256-CBC + PSK) → Mobile routes opaque blob → Cloud decrypts** | **Implemented** |
+| Per-device PSK  | Each drive has unique 32-byte key; compromise of one drive doesn't expose others | Implemented |
 | Drive at rest   | AES-256-CBC with random IV         | Implemented   |
 | Drive Wi-Fi     | Pre-shared token, constant-time    | Implemented   |
+| Mobile isolation| No keys, no decryption, opaque blob storage only, auto-delete after upload | Implemented |
 | Hash comparison | Constant-time XOR                  | Implemented   |
 | Path safety     | Canonical path resolution + deny list | Implemented |
-| Cloud auth      | JWT with role hierarchy            | Implemented   |
+| Cloud auth      | JWT + API keys, 4-tier role hierarchy | Implemented |
+| Multi-tenancy   | Org isolation via org_id + middleware  | Implemented |
+| Platform boundary| Platform admin blocked from org data  | Implemented |
+| Audit logging   | All operations logged per org         | Implemented |
 | Cloud rate limit| Sliding window per client          | Implemented   |
+| Cloud decryption| PSK lookup by deviceId → AES-256-CBC decrypt → store plaintext | Implemented |
 | Input validation| SHA256 format, filename, device ID | Implemented   |
 | TLS/HTTPS       | Not yet (Stage 2)                  | Planned       |
 | Password storage| bcrypt (currently SHA256 for dev)  | Planned       |
+| Cert pinning    | Mobile → Cloud TLS pinning         | Planned       |
+| Webhook signing | HMAC-SHA256 for webhook payloads   | Implemented   |
+| Quota enforcement| Per-org resource limits            | Implemented   |
+
+### 6.1 E2E Encryption Wire Format
+
+```
+Drive side:   plaintext → AES-256-CBC(plaintext, PSK, random_IV) → [16-byte IV][ciphertext] → base64 encode
+Transport:    base64 string over HTTP (drive→mobile) and HTTPS (mobile→cloud)
+Cloud side:   base64 decode → split IV (first 16 bytes) + ciphertext → AES-256-CBC decrypt → PKCS7 unpad → plaintext
+```
+
+Mobile never holds a PSK and cannot decrypt any log data. It stores, forwards, and deletes opaque blobs.
 
 ---
 

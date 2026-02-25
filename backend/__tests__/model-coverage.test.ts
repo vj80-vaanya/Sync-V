@@ -176,7 +176,7 @@ describe('AuthMiddleware - edge cases via HTTP', () => {
 
   test('hasRole returns false for token signed with wrong secret', () => {
     const otherAuth = new AuthService('different-secret');
-    const token = otherAuth.generateToken({ userId: 'u1', username: 'test', role: 'admin' });
+    const token = otherAuth.generateToken({ userId: 'u1', username: 'test', role: 'org_admin' });
     expect(authService.hasRole(token, 'viewer')).toBe(false);
   });
 

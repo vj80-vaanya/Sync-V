@@ -11,6 +11,7 @@ export interface LogRecord {
   vendor: string;
   format: string;
   metadata: string;
+  org_id: string;
   uploaded_at: string;
 }
 
@@ -27,7 +28,10 @@ export interface LogInput {
   vendor?: string;
   format?: string;
   metadata?: Record<string, string>;
+  org_id?: string;
 }
+
+const SUMMARY_COLS = 'id, device_id, filename, size, checksum, raw_path, vendor, format, metadata, org_id, uploaded_at';
 
 export class LogModel {
   private db: Database.Database;
@@ -38,8 +42,8 @@ export class LogModel {
 
   create(log: LogInput): LogRecord {
     const stmt = this.db.prepare(`
-      INSERT INTO logs (id, device_id, filename, size, checksum, raw_path, raw_data, vendor, format, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO logs (id, device_id, filename, size, checksum, raw_path, raw_data, vendor, format, metadata, org_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -53,6 +57,7 @@ export class LogModel {
       log.vendor || 'unknown',
       log.format || 'text',
       JSON.stringify(log.metadata || {}),
+      log.org_id || null,
     );
 
     return this.getById(log.id)!;
@@ -74,17 +79,37 @@ export class LogModel {
   }
 
   getAllSummary(): LogSummary[] {
-    const stmt = this.db.prepare(
-      'SELECT id, device_id, filename, size, checksum, raw_path, vendor, format, metadata, uploaded_at FROM logs ORDER BY uploaded_at DESC'
-    );
+    const stmt = this.db.prepare(`SELECT ${SUMMARY_COLS} FROM logs ORDER BY uploaded_at DESC`);
     return stmt.all() as LogSummary[];
   }
 
   getByDeviceIdSummary(deviceId: string): LogSummary[] {
     const stmt = this.db.prepare(
-      'SELECT id, device_id, filename, size, checksum, raw_path, vendor, format, metadata, uploaded_at FROM logs WHERE device_id = ? ORDER BY uploaded_at DESC'
+      `SELECT ${SUMMARY_COLS} FROM logs WHERE device_id = ? ORDER BY uploaded_at DESC`
     );
     return stmt.all(deviceId) as LogSummary[];
+  }
+
+  getAllSummaryByOrg(orgId: string): LogSummary[] {
+    const stmt = this.db.prepare(`SELECT ${SUMMARY_COLS} FROM logs WHERE org_id = ? ORDER BY uploaded_at DESC`);
+    return stmt.all(orgId) as LogSummary[];
+  }
+
+  getByDeviceIdSummaryAndOrg(deviceId: string, orgId: string): LogSummary[] {
+    const stmt = this.db.prepare(
+      `SELECT ${SUMMARY_COLS} FROM logs WHERE device_id = ? AND org_id = ? ORDER BY uploaded_at DESC`
+    );
+    return stmt.all(deviceId, orgId) as LogSummary[];
+  }
+
+  countByOrg(orgId: string): number {
+    const row = this.db.prepare('SELECT COUNT(*) as cnt FROM logs WHERE org_id = ?').get(orgId) as any;
+    return row?.cnt || 0;
+  }
+
+  storageSizeByOrg(orgId: string): number {
+    const row = this.db.prepare('SELECT COALESCE(SUM(size), 0) as total FROM logs WHERE org_id = ?').get(orgId) as any;
+    return row?.total || 0;
   }
 
   getByChecksum(checksum: string): LogRecord | undefined {

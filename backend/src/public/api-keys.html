@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sync-V - API Keys</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/dashboard/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div id="nav-bar"></div>
+
+  <div class="page">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:8px">
+      <div>
+        <h1 class="page-title" style="margin-bottom:4px">API Keys</h1>
+        <p class="page-subtitle" style="margin-bottom:0">Manage programmatic access to your organization</p>
+      </div>
+      <button class="btn btn-primary" onclick="openCreateModal()">+ Create API Key</button>
+    </div>
+
+    <!-- Revealed key banner (shown once after creation) -->
+    <div id="key-reveal-banner" style="display:none">
+      <div class="form-section" style="border-left:4px solid var(--success)">
+        <h3 style="color:var(--success);margin-bottom:8px">API Key Created</h3>
+        <p style="font-size:13px;color:var(--text-light);margin-bottom:12px">Copy this key now. You will not be able to see it again.</p>
+        <div style="display:flex;gap:8px;align-items:center">
+          <code id="revealed-key" style="flex:1;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-family:var(--font-mono);font-size:13px;color:var(--text-dark);word-break:break-all"></code>
+          <button class="btn btn-secondary btn-sm" onclick="copyRevealedKey()">Copy</button>
+        </div>
+        <button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="dismissKeyBanner()">Dismiss</button>
+      </div>
+    </div>
+
+    <!-- API Keys Table -->
+    <div class="card">
+      <div class="card-title">Active API Keys</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Prefix</th>
+              <th>Permissions</th>
+              <th>Last Used</th>
+              <th>Created</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="keys-table"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create API Key Modal -->
+  <div id="create-key-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeCreateModal()">
+    <div class="modal-card" style="max-width:520px">
+      <div class="modal-header">
+        <h3>Create API Key</h3>
+        <button class="modal-close" onclick="closeCreateModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Key Name</label>
+          <input type="text" id="new-key-name" placeholder="e.g. CI/CD Pipeline" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;font-family:var(--font-sans);color:var(--text-dark);outline:none">
+        </div>
+        <div style="margin-top:16px">
+          <label style="display:block;font-size:13px;font-weight:600;color:var(--text-mid);margin-bottom:10px">Permissions</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px" id="permissions-grid">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--text-mid);cursor:pointer">
+              <input type="checkbox" value="devices:read" checked> devices:read
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--text-mid);cursor:pointer">
+              <input type="checkbox" value="devices:write"> devices:write
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--text-mid);cursor:pointer">
+              <input type="checkbox" value="logs:read" checked> logs:read
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--text-mid);cursor:pointer">
+              <input type="checkbox" value="logs:write"> logs:write
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--text-mid);cursor:pointer">
+              <input type="checkbox" value="firmware:read"> firmware:read
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--text-mid);cursor:pointer">
+              <input type="checkbox" value="firmware:write"> firmware:write
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--text-mid);cursor:pointer">
+              <input type="checkbox" value="clusters:read"> clusters:read
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--text-mid);cursor:pointer">
+              <input type="checkbox" value="clusters:write"> clusters:write
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeCreateModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="createApiKey()">Create Key</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/dashboard/js/auth.js"></script>
+  <script src="/dashboard/js/api.js"></script>
+  <script src="/dashboard/js/app.js"></script>
+  <script>
+    if (!AUTH.requireAuth()) throw new Error('Not authenticated');
+
+    // Build extended nav inline
+    (function() {
+      var user = AUTH.getUser();
+      var pages = [
+        { id: 'overview', label: 'Overview', href: '/dashboard/overview.html', icon: ICONS.overview },
+        { id: 'devices', label: 'Devices', href: '/dashboard/devices.html', icon: ICONS.devices },
+        { id: 'clusters', label: 'Clusters', href: '/dashboard/clusters.html', icon: ICONS.firmware },
+        { id: 'logs', label: 'Logs', href: '/dashboard/logs.html', icon: ICONS.logs },
+        { id: 'firmware', label: 'Firmware', href: '/dashboard/firmware.html', icon: ICONS.firmware },
+        { id: 'team', label: 'Team', href: '/dashboard/team.html', icon: ICONS.devices },
+        { id: 'api-keys', label: 'API Keys', href: '/dashboard/api-keys.html', icon: ICONS.firmware },
+        { id: 'webhooks', label: 'Webhooks', href: '/dashboard/webhooks.html', icon: ICONS.logs },
+        { id: 'audit', label: 'Audit', href: '/dashboard/audit.html', icon: ICONS.logs },
+        { id: 'usage', label: 'Usage', href: '/dashboard/usage.html', icon: ICONS.overview }
+      ];
+      var linksHtml = pages.map(function(p) {
+        var cls = p.id === 'api-keys' ? ' class="active"' : '';
+        return '<a href="' + p.href + '"' + cls + '>' + p.icon + ' ' + p.label + '</a>';
+      }).join('');
+      var userName = user ? user.username : '';
+      var userRole = user ? user.role : '';
+      var nav = document.getElementById('nav-bar');
+      nav.className = 'nav-bar';
+      nav.innerHTML =
+        '<div class="nav-brand"><span class="logo-icon logo-icon-nav">' + BRAND_LOGO + '</span><span class="nav-brand-gradient">Sync-V</span></div>' +
+        '<button class="nav-hamburger" onclick="toggleMobileNav()" aria-label="Menu">' + ICONS.hamburger + '</button>' +
+        '<div class="nav-links" id="nav-links">' + linksHtml + '</div>' +
+        '<div class="nav-user">' +
+          '<button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme"></button>' +
+          '<span>' + userName + '</span>' +
+          '<span class="role">' + userRole + '</span>' +
+          '<button class="logout-btn" onclick="AUTH.logout()">' + ICONS.logout + ' Logout</button>' +
+        '</div>';
+      updateThemeButtons(document.documentElement.getAttribute('data-theme') || 'dark');
+    })();
+    renderFooter();
+
+    // Show skeleton loading
+    document.getElementById('keys-table').innerHTML = skeletonRows(3, 6);
+
+    var allKeys = [];
+
+    async function loadKeys() {
+      allKeys = await apiGet('/api/org/api-keys') || [];
+      renderKeys();
+    }
+
+    function renderKeys() {
+      var tbody = document.getElementById('keys-table');
+      if (allKeys.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">' +
+          '<div class="empty-icon-circle">' + ICONS.emptyBox + '</div>' +
+          '<h3>No API keys</h3><p>Create an API key for programmatic access</p></td></tr>';
+        return;
+      }
+      tbody.innerHTML = allKeys.map(function(k) {
+        var perms = (k.permissions || []).map(function(p) {
+          return '<span class="badge badge-muted" style="margin:1px 2px;font-size:11px">' + escapeHtml(p) + '</span>';
+        }).join('');
+        if (!perms) perms = '<span style="color:var(--text-muted);font-size:12px">All</span>';
+
+        return '<tr style="cursor:default">' +
+          '<td><strong>' + escapeHtml(k.name) + '</strong></td>' +
+          '<td class="text-mono">' + escapeHtml(k.prefix || k.key_prefix || '****') + '...</td>' +
+          '<td>' + perms + '</td>' +
+          '<td>' + formatDate(k.last_used || k.lastUsed) + '</td>' +
+          '<td>' + formatDate(k.created_at || k.createdAt) + '</td>' +
+          '<td><button class="btn btn-danger btn-sm" onclick="revokeKey(\'' + escapeHtml(k.id) + '\', \'' + escapeHtml(k.name) + '\')">' + ICONS.trash + ' Revoke</button></td>' +
+        '</tr>';
+      }).join('');
+      staggerRows('keys-table');
+    }
+
+    // Create modal
+    function openCreateModal() {
+      document.getElementById('new-key-name').value = '';
+      var checkboxes = document.querySelectorAll('#permissions-grid input[type="checkbox"]');
+      checkboxes.forEach(function(cb) { cb.checked = false; });
+      // Default: devices:read and logs:read checked
+      checkboxes.forEach(function(cb) {
+        if (cb.value === 'devices:read' || cb.value === 'logs:read') cb.checked = true;
+      });
+      document.getElementById('create-key-modal').style.display = 'flex';
+    }
+    function closeCreateModal() {
+      document.getElementById('create-key-modal').style.display = 'none';
+    }
+
+    async function createApiKey() {
+      var name = document.getElementById('new-key-name').value.trim();
+      if (!name) { showToast('Key name is required', 'error'); return; }
+
+      var permissions = [];
+      document.querySelectorAll('#permissions-grid input[type="checkbox"]:checked').forEach(function(cb) {
+        permissions.push(cb.value);
+      });
+
+      var result = await apiPost('/api/org/api-keys', { name: name, permissions: permissions });
+      if (result && (result.key || result.rawKey || result.apiKey)) {
+        var rawKey = result.key || result.rawKey || result.apiKey;
+        showToast('API key created: ' + name, 'success');
+        closeCreateModal();
+
+        // Show revealed key banner
+        document.getElementById('revealed-key').textContent = rawKey;
+        document.getElementById('key-reveal-banner').style.display = '';
+
+        loadKeys();
+      } else {
+        showToast((result && result.error) || 'Failed to create API key', 'error');
+      }
+    }
+
+    function copyRevealedKey() {
+      var keyText = document.getElementById('revealed-key').textContent;
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(keyText).then(function() {
+          showToast('API key copied to clipboard', 'success');
+        });
+      } else {
+        // Fallback
+        var textarea = document.createElement('textarea');
+        textarea.value = keyText;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        showToast('API key copied to clipboard', 'success');
+      }
+    }
+
+    function dismissKeyBanner() {
+      document.getElementById('key-reveal-banner').style.display = 'none';
+    }
+
+    function revokeKey(keyId, keyName) {
+      showConfirmModal(
+        'Revoke API Key',
+        'Are you sure you want to revoke "' + keyName + '"? Any integrations using this key will stop working immediately.',
+        async function() {
+          var result = await apiDelete('/api/org/api-keys/' + encodeURIComponent(keyId));
+          if (result && !result.error) {
+            showToast('API key revoked: ' + keyName, 'success');
+            loadKeys();
+          } else {
+            showToast((result && result.error) || 'Failed to revoke API key', 'error');
+          }
+        }
+      );
+    }
+
+    loadKeys();
+  </script>
+</body>
+</html>

@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sync-V - Audit Log</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/dashboard/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div id="nav-bar"></div>
+
+  <div class="page">
+    <h1 class="page-title">Audit Log</h1>
+    <p class="page-subtitle">Organization activity history</p>
+
+    <div class="filter-bar">
+      <select id="filter-action">
+        <option value="">All Actions</option>
+        <option value="user.login">user.login</option>
+        <option value="user.created">user.created</option>
+        <option value="user.deleted">user.deleted</option>
+        <option value="user.role_changed">user.role_changed</option>
+        <option value="device.registered">device.registered</option>
+        <option value="device.deleted">device.deleted</option>
+        <option value="device.updated">device.updated</option>
+        <option value="log.uploaded">log.uploaded</option>
+        <option value="log.deleted">log.deleted</option>
+        <option value="firmware.uploaded">firmware.uploaded</option>
+        <option value="firmware.deleted">firmware.deleted</option>
+        <option value="cluster.created">cluster.created</option>
+        <option value="cluster.deleted">cluster.deleted</option>
+        <option value="api_key.created">api_key.created</option>
+        <option value="api_key.revoked">api_key.revoked</option>
+        <option value="webhook.created">webhook.created</option>
+        <option value="webhook.deleted">webhook.deleted</option>
+        <option value="psk.rotated">psk.rotated</option>
+      </select>
+      <input type="date" id="filter-date-from" title="From date" style="max-width:160px">
+      <input type="date" id="filter-date-to" title="To date" style="max-width:160px">
+      <button class="btn btn-secondary" onclick="applyFilters()">Filter</button>
+      <button class="btn btn-ghost" onclick="clearFilters()">Clear</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Audit Events</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Actor</th>
+              <th>Action</th>
+              <th>Target Type</th>
+              <th>Target ID</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody id="audit-table"></tbody>
+        </table>
+      </div>
+      <div id="pagination"></div>
+    </div>
+  </div>
+
+  <script src="/dashboard/js/auth.js"></script>
+  <script src="/dashboard/js/api.js"></script>
+  <script src="/dashboard/js/app.js"></script>
+  <script>
+    if (!AUTH.requireAuth()) throw new Error('Not authenticated');
+
+    // Build extended nav inline
+    (function() {
+      var user = AUTH.getUser();
+      var pages = [
+        { id: 'overview', label: 'Overview', href: '/dashboard/overview.html', icon: ICONS.overview },
+        { id: 'devices', label: 'Devices', href: '/dashboard/devices.html', icon: ICONS.devices },
+        { id: 'clusters', label: 'Clusters', href: '/dashboard/clusters.html', icon: ICONS.firmware },
+        { id: 'logs', label: 'Logs', href: '/dashboard/logs.html', icon: ICONS.logs },
+        { id: 'firmware', label: 'Firmware', href: '/dashboard/firmware.html', icon: ICONS.firmware },
+        { id: 'team', label: 'Team', href: '/dashboard/team.html', icon: ICONS.devices },
+        { id: 'api-keys', label: 'API Keys', href: '/dashboard/api-keys.html', icon: ICONS.firmware },
+        { id: 'webhooks', label: 'Webhooks', href: '/dashboard/webhooks.html', icon: ICONS.logs },
+        { id: 'audit', label: 'Audit', href: '/dashboard/audit.html', icon: ICONS.logs },
+        { id: 'usage', label: 'Usage', href: '/dashboard/usage.html', icon: ICONS.overview }
+      ];
+      var linksHtml = pages.map(function(p) {
+        var cls = p.id === 'audit' ? ' class="active"' : '';
+        return '<a href="' + p.href + '"' + cls + '>' + p.icon + ' ' + p.label + '</a>';
+      }).join('');
+      var userName = user ? user.username : '';
+      var userRole = user ? user.role : '';
+      var nav = document.getElementById('nav-bar');
+      nav.className = 'nav-bar';
+      nav.innerHTML =
+        '<div class="nav-brand"><span class="logo-icon logo-icon-nav">' + BRAND_LOGO + '</span><span class="nav-brand-gradient">Sync-V</span></div>' +
+        '<button class="nav-hamburger" onclick="toggleMobileNav()" aria-label="Menu">' + ICONS.hamburger + '</button>' +
+        '<div class="nav-links" id="nav-links">' + linksHtml + '</div>' +
+        '<div class="nav-user">' +
+          '<button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme"></button>' +
+          '<span>' + userName + '</span>' +
+          '<span class="role">' + userRole + '</span>' +
+          '<button class="logout-btn" onclick="AUTH.logout()">' + ICONS.logout + ' Logout</button>' +
+        '</div>';
+      updateThemeButtons(document.documentElement.getAttribute('data-theme') || 'dark');
+    })();
+    renderFooter();
+
+    // Show skeleton loading
+    document.getElementById('audit-table').innerHTML = skeletonRows(6, 6);
+
+    var allEvents = [];
+    var currentPage = 1;
+    var pageSize = 50;
+
+    function actionBadge(action) {
+      if (!action) return '<span class="badge badge-muted">unknown</span>';
+
+      var colorMap = {
+        'login': 'info',
+        'created': 'success',
+        'uploaded': 'success',
+        'registered': 'success',
+        'deleted': 'danger',
+        'revoked': 'danger',
+        'removed': 'danger',
+        'changed': 'warning',
+        'updated': 'warning',
+        'rotated': 'warning'
+      };
+
+      var cls = 'muted';
+      var actionLower = action.toLowerCase();
+      var keys = Object.keys(colorMap);
+      for (var i = 0; i < keys.length; i++) {
+        if (actionLower.indexOf(keys[i]) !== -1) {
+          cls = colorMap[keys[i]];
+          break;
+        }
+      }
+
+      return '<span class="badge badge-' + cls + '">' + escapeHtml(action) + '</span>';
+    }
+
+    async function loadAuditEvents() {
+      var queryParts = [];
+      var actionFilter = document.getElementById('filter-action').value;
+      var dateFrom = document.getElementById('filter-date-from').value;
+      var dateTo = document.getElementById('filter-date-to').value;
+
+      if (actionFilter) queryParts.push('action=' + encodeURIComponent(actionFilter));
+      if (dateFrom) queryParts.push('from=' + encodeURIComponent(dateFrom));
+      if (dateTo) queryParts.push('to=' + encodeURIComponent(dateTo));
+
+      var url = '/api/org/audit' + (queryParts.length > 0 ? '?' + queryParts.join('&') : '');
+      allEvents = await apiGet(url) || [];
+      currentPage = 1;
+      renderEvents();
+    }
+
+    function renderEvents() {
+      var tbody = document.getElementById('audit-table');
+      var total = allEvents.length;
+      var start = (currentPage - 1) * pageSize;
+      var end = Math.min(start + pageSize, total);
+      var shown = allEvents.slice(start, end);
+
+      if (total === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">' +
+          '<div class="empty-icon-circle">' + ICONS.emptyBox + '</div>' +
+          '<h3>No audit events found</h3><p>Try adjusting your filters</p></td></tr>';
+        document.getElementById('pagination').innerHTML = '';
+        return;
+      }
+
+      tbody.innerHTML = shown.map(function(e) {
+        var details = e.details || e.metadata || '';
+        if (typeof details === 'object') details = JSON.stringify(details);
+        var detailsTrunc = details.length > 60 ? details.substring(0, 60) + '...' : details;
+
+        return '<tr style="cursor:default">' +
+          '<td style="white-space:nowrap">' + formatDate(e.timestamp || e.created_at || e.createdAt) + '</td>' +
+          '<td><strong>' + escapeHtml(e.actor || e.username || e.user || '-') + '</strong></td>' +
+          '<td>' + actionBadge(e.action) + '</td>' +
+          '<td>' + escapeHtml(e.target_type || e.targetType || '-') + '</td>' +
+          '<td class="text-mono"><span class="text-truncate">' + escapeHtml(e.target_id || e.targetId || '-') + '</span></td>' +
+          '<td style="font-size:12px;color:var(--text-light);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHtml(details) + '">' + escapeHtml(detailsTrunc || '-') + '</td>' +
+        '</tr>';
+      }).join('');
+      staggerRows('audit-table');
+
+      // Pagination
+      var totalPages = Math.ceil(total / pageSize);
+      var pag = document.getElementById('pagination');
+      if (totalPages <= 1) {
+        pag.innerHTML = '<div class="pagination-bar"><span class="pagination-info">' + total + ' event' + (total !== 1 ? 's' : '') + '</span></div>';
+      } else {
+        pag.innerHTML = '<div class="pagination-bar">' +
+          '<span class="pagination-info">Showing ' + (start + 1) + '-' + end + ' of ' + total + '</span>' +
+          '<div class="pagination-controls">' +
+            '<button class="btn btn-outline btn-sm" onclick="prevPage()" ' + (currentPage <= 1 ? 'disabled' : '') + '>' + ICONS.prev + ' Prev</button>' +
+            '<button class="btn btn-outline btn-sm" onclick="nextPage()" ' + (currentPage >= totalPages ? 'disabled' : '') + '>Next ' + ICONS.next + '</button>' +
+          '</div>' +
+        '</div>';
+      }
+    }
+
+    function prevPage() {
+      if (currentPage > 1) { currentPage--; renderEvents(); }
+    }
+
+    function nextPage() {
+      var totalPages = Math.ceil(allEvents.length / pageSize);
+      if (currentPage < totalPages) { currentPage++; renderEvents(); }
+    }
+
+    function applyFilters() {
+      loadAuditEvents();
+    }
+
+    function clearFilters() {
+      document.getElementById('filter-action').value = '';
+      document.getElementById('filter-date-from').value = '';
+      document.getElementById('filter-date-to').value = '';
+      loadAuditEvents();
+    }
+
+    loadAuditEvents();
+  </script>
+</body>
+</html>

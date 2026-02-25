@@ -12,6 +12,19 @@ export function createDatabase(dbPath?: string): Database.Database {
   db.pragma('foreign_keys = ON');
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS organizations (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT UNIQUE NOT NULL,
+      plan TEXT NOT NULL DEFAULT 'free',
+      max_devices INTEGER NOT NULL DEFAULT 5,
+      max_storage_bytes INTEGER NOT NULL DEFAULT 104857600,
+      max_users INTEGER NOT NULL DEFAULT 3,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS devices (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -20,6 +33,8 @@ export function createDatabase(dbPath?: string): Database.Database {
       firmware_version TEXT DEFAULT '',
       last_seen TEXT DEFAULT '',
       metadata TEXT DEFAULT '{}',
+      org_id TEXT REFERENCES organizations(id),
+      cluster_id TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -35,6 +50,7 @@ export function createDatabase(dbPath?: string): Database.Database {
       vendor TEXT DEFAULT 'unknown',
       format TEXT DEFAULT 'text',
       metadata TEXT DEFAULT '{}',
+      org_id TEXT REFERENCES organizations(id),
       uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (device_id) REFERENCES devices(id)
     );
@@ -47,6 +63,7 @@ export function createDatabase(dbPath?: string): Database.Database {
       size INTEGER NOT NULL DEFAULT 0,
       sha256 TEXT NOT NULL,
       description TEXT DEFAULT '',
+      org_id TEXT REFERENCES organizations(id),
       release_date TEXT NOT NULL DEFAULT (datetime('now')),
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -56,7 +73,9 @@ export function createDatabase(dbPath?: string): Database.Database {
       username TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'viewer',
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      org_id TEXT REFERENCES organizations(id),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS device_keys (
@@ -65,20 +84,78 @@ export function createDatabase(dbPath?: string): Database.Database {
       created_at TEXT DEFAULT (datetime('now')),
       rotated_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS clusters (
+      id TEXT PRIMARY KEY,
+      org_id TEXT NOT NULL REFERENCES organizations(id),
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id TEXT PRIMARY KEY,
+      org_id TEXT REFERENCES organizations(id),
+      actor_id TEXT NOT NULL,
+      actor_type TEXT NOT NULL DEFAULT 'user',
+      action TEXT NOT NULL,
+      target_type TEXT DEFAULT '',
+      target_id TEXT DEFAULT '',
+      details TEXT DEFAULT '{}',
+      ip_address TEXT DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS api_keys (
+      id TEXT PRIMARY KEY,
+      org_id TEXT NOT NULL REFERENCES organizations(id),
+      name TEXT NOT NULL,
+      key_hash TEXT NOT NULL,
+      key_prefix TEXT NOT NULL,
+      permissions TEXT NOT NULL DEFAULT '[]',
+      last_used_at TEXT DEFAULT '',
+      created_by TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS webhooks (
+      id TEXT PRIMARY KEY,
+      org_id TEXT NOT NULL REFERENCES organizations(id),
+      url TEXT NOT NULL,
+      secret TEXT NOT NULL,
+      events TEXT NOT NULL DEFAULT '[]',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      last_triggered_at TEXT DEFAULT '',
+      failure_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
-  // Migration: add new columns to existing logs tables
-  const logCols = db.pragma('table_info(logs)') as any[];
-  const colNames = logCols.map((c: any) => c.name);
-  if (!colNames.includes('raw_data')) {
-    db.exec("ALTER TABLE logs ADD COLUMN raw_data TEXT DEFAULT ''");
+  // Migration: add new columns to existing tables
+  function addColumnIfMissing(table: string, column: string, definition: string) {
+    const cols = db.pragma(`table_info(${table})`) as any[];
+    if (!cols.some((c: any) => c.name === column)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
   }
-  if (!colNames.includes('vendor')) {
-    db.exec("ALTER TABLE logs ADD COLUMN vendor TEXT DEFAULT 'unknown'");
-  }
-  if (!colNames.includes('format')) {
-    db.exec("ALTER TABLE logs ADD COLUMN format TEXT DEFAULT 'text'");
-  }
+
+  // Logs migrations
+  addColumnIfMissing('logs', 'raw_data', "TEXT DEFAULT ''");
+  addColumnIfMissing('logs', 'vendor', "TEXT DEFAULT 'unknown'");
+  addColumnIfMissing('logs', 'format', "TEXT DEFAULT 'text'");
+  addColumnIfMissing('logs', 'org_id', 'TEXT REFERENCES organizations(id)');
+
+  // Devices migrations
+  addColumnIfMissing('devices', 'org_id', 'TEXT REFERENCES organizations(id)');
+  addColumnIfMissing('devices', 'cluster_id', 'TEXT');
+
+  // Users migrations
+  addColumnIfMissing('users', 'org_id', 'TEXT REFERENCES organizations(id)');
+  addColumnIfMissing('users', 'updated_at', "TEXT DEFAULT ''");
+
+  // Firmware migrations
+  addColumnIfMissing('firmware', 'org_id', 'TEXT REFERENCES organizations(id)');
 
   return db;
 }

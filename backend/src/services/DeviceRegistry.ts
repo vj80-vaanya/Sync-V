@@ -19,12 +19,24 @@ export class DeviceRegistry {
     return this.model.getAll();
   }
 
+  getAllDevicesByOrg(orgId: string): DeviceRecord[] {
+    return this.model.getAllByOrg(orgId);
+  }
+
   getDevicesByType(type: string): DeviceRecord[] {
     return this.model.getByType(type);
   }
 
+  getDevicesByTypeAndOrg(type: string, orgId: string): DeviceRecord[] {
+    return this.model.getByTypeAndOrg(type, orgId);
+  }
+
   getDevicesByStatus(status: string): DeviceRecord[] {
     return this.model.getByStatus(status);
+  }
+
+  getDevicesByStatusAndOrg(status: string, orgId: string): DeviceRecord[] {
+    return this.model.getByStatusAndOrg(status, orgId);
   }
 
   updateMetadata(id: string, metadata: Record<string, string>): boolean {

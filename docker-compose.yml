@@ -8,7 +8,7 @@ services:
     environment:
       PORT: "3000"
       DB_PATH: /data/syncv.db
-      JWT_SECRET: syncv-demo-secret-key
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env file}
       SEED_DEMO_DATA: "true"
     volumes:
       - cloud-data:/data

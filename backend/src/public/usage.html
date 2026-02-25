@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sync-V - Usage</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/dashboard/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div id="nav-bar"></div>
+
+  <div class="page">
+    <h1 class="page-title">Quota Usage</h1>
+    <p class="page-subtitle">Resource consumption and limits for your organization</p>
+
+    <div class="stats-grid" id="usage-grid">
+      <span class="loading">Loading usage data...</span>
+    </div>
+
+    <div class="card" style="margin-top:8px">
+      <div class="card-title">Usage Breakdown</div>
+      <div id="usage-details"><span class="loading">Loading...</span></div>
+    </div>
+  </div>
+
+  <script src="/dashboard/js/auth.js"></script>
+  <script src="/dashboard/js/api.js"></script>
+  <script src="/dashboard/js/app.js"></script>
+  <script>
+    if (!AUTH.requireAuth()) throw new Error('Not authenticated');
+
+    // Build extended nav inline
+    (function() {
+      var user = AUTH.getUser();
+      var pages = [
+        { id: 'overview', label: 'Overview', href: '/dashboard/overview.html', icon: ICONS.overview },
+        { id: 'devices', label: 'Devices', href: '/dashboard/devices.html', icon: ICONS.devices },
+        { id: 'clusters', label: 'Clusters', href: '/dashboard/clusters.html', icon: ICONS.firmware },
+        { id: 'logs', label: 'Logs', href: '/dashboard/logs.html', icon: ICONS.logs },
+        { id: 'firmware', label: 'Firmware', href: '/dashboard/firmware.html', icon: ICONS.firmware },
+        { id: 'team', label: 'Team', href: '/dashboard/team.html', icon: ICONS.devices },
+        { id: 'api-keys', label: 'API Keys', href: '/dashboard/api-keys.html', icon: ICONS.firmware },
+        { id: 'webhooks', label: 'Webhooks', href: '/dashboard/webhooks.html', icon: ICONS.logs },
+        { id: 'audit', label: 'Audit', href: '/dashboard/audit.html', icon: ICONS.logs },
+        { id: 'usage', label: 'Usage', href: '/dashboard/usage.html', icon: ICONS.overview }
+      ];
+      var linksHtml = pages.map(function(p) {
+        var cls = p.id === 'usage' ? ' class="active"' : '';
+        return '<a href="' + p.href + '"' + cls + '>' + p.icon + ' ' + p.label + '</a>';
+      }).join('');
+      var userName = user ? user.username : '';
+      var userRole = user ? user.role : '';
+      var nav = document.getElementById('nav-bar');
+      nav.className = 'nav-bar';
+      nav.innerHTML =
+        '<div class="nav-brand"><span class="logo-icon logo-icon-nav">' + BRAND_LOGO + '</span><span class="nav-brand-gradient">Sync-V</span></div>' +
+        '<button class="nav-hamburger" onclick="toggleMobileNav()" aria-label="Menu">' + ICONS.hamburger + '</button>' +
+        '<div class="nav-links" id="nav-links">' + linksHtml + '</div>' +
+        '<div class="nav-user">' +
+          '<button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme"></button>' +
+          '<span>' + userName + '</span>' +
+          '<span class="role">' + userRole + '</span>' +
+          '<button class="logout-btn" onclick="AUTH.logout()">' + ICONS.logout + ' Logout</button>' +
+        '</div>';
+      updateThemeButtons(document.documentElement.getAttribute('data-theme') || 'dark');
+    })();
+    renderFooter();
+
+    function getUsageColor(percent) {
+      if (percent >= 80) return 'var(--danger)';
+      if (percent >= 60) return 'var(--warning)';
+      return 'var(--success)';
+    }
+
+    function getUsageBorderClass(percent) {
+      if (percent >= 80) return 'stat-border-red';
+      if (percent >= 60) return 'stat-border-blue';
+      return 'stat-border-green';
+    }
+
+    function buildUsageCard(label, used, limit, unit, iconHtml) {
+      var percent = limit > 0 ? Math.round((used / limit) * 100) : 0;
+      var color = getUsageColor(percent);
+      var borderClass = getUsageBorderClass(percent);
+      var displayUsed = unit === 'MB' ? (used / (1024 * 1024)).toFixed(1) : used;
+      var displayLimit = unit === 'MB' ? (limit / (1024 * 1024)).toFixed(1) : limit;
+      if (unit === 'MB') {
+        // If already in MB from API, use directly
+        if (used < 1024) {
+          displayUsed = used;
+          displayLimit = limit;
+        }
+      }
+
+      return '<div class="stat-card ' + borderClass + '">' +
+        '<div class="stat-icon" style="background:var(--primary-50);color:' + color + '">' + iconHtml + '</div>' +
+        '<div class="stat-value" style="font-size:28px;color:' + color + '">' + displayUsed + '<span style="font-size:14px;font-weight:500;color:var(--text-muted)"> / ' + displayLimit + (unit ? ' ' + unit : '') + '</span></div>' +
+        '<div class="stat-label">' + escapeHtml(label) + '</div>' +
+        '<div class="progress-bar-wrap" style="margin-top:12px">' +
+          '<div class="progress-bar" style="width:' + Math.min(percent, 100) + '%;background:' + color + '"></div>' +
+        '</div>' +
+        '<div style="display:flex;justify-content:space-between;margin-top:6px;font-size:11px;color:var(--text-muted)">' +
+          '<span>' + percent + '% used</span>' +
+          '<span>' + (limit - used) + (unit ? ' ' + unit : '') + ' remaining</span>' +
+        '</div>' +
+      '</div>';
+    }
+
+    async function loadUsage() {
+      var usage = await apiGet('/api/org/usage');
+      if (!usage) {
+        document.getElementById('usage-grid').innerHTML = '<div class="card" style="grid-column:1/-1"><div class="empty-state"><h3>Unable to load usage data</h3></div></div>';
+        document.getElementById('usage-details').innerHTML = '';
+        return;
+      }
+
+      // Normalize field names (handle both camelCase and snake_case)
+      var devices = usage.devices || {};
+      var storage = usage.storage || {};
+      var users = usage.users || {};
+
+      var devUsed = devices.used || devices.current || 0;
+      var devLimit = devices.limit || devices.max || devices.quota || 0;
+      var storUsed = storage.used || storage.current || 0;
+      var storLimit = storage.limit || storage.max || storage.quota || 0;
+      var usrUsed = users.used || users.current || 0;
+      var usrLimit = users.limit || users.max || users.quota || 0;
+
+      // Determine storage unit
+      var storUnit = storage.unit || 'MB';
+
+      var grid = document.getElementById('usage-grid');
+      grid.innerHTML =
+        buildUsageCard('Devices', devUsed, devLimit, '', ICONS.devices) +
+        buildUsageCard('Storage', storUsed, storLimit, storUnit, ICONS.logsTotal) +
+        buildUsageCard('Users', usrUsed, usrLimit, '', ICONS.totalDevices);
+
+      staggerCards('#usage-grid');
+
+      // Usage details table
+      var details = document.getElementById('usage-details');
+      var rows = [
+        { label: 'Devices Used', value: devUsed + ' / ' + devLimit },
+        { label: 'Storage Used', value: storUsed + ' / ' + storLimit + ' ' + storUnit },
+        { label: 'Users Used', value: usrUsed + ' / ' + usrLimit }
+      ];
+
+      // Add any extra quota fields from the API
+      if (usage.api_keys || usage.apiKeys) {
+        var ak = usage.api_keys || usage.apiKeys || {};
+        rows.push({ label: 'API Keys', value: (ak.used || ak.current || 0) + ' / ' + (ak.limit || ak.max || 'unlimited') });
+      }
+      if (usage.webhooks) {
+        var wh = usage.webhooks || {};
+        rows.push({ label: 'Webhooks', value: (wh.used || wh.current || 0) + ' / ' + (wh.limit || wh.max || 'unlimited') });
+      }
+      if (usage.clusters) {
+        var cl = usage.clusters || {};
+        rows.push({ label: 'Clusters', value: (cl.used || cl.current || 0) + ' / ' + (cl.limit || cl.max || 'unlimited') });
+      }
+
+      details.innerHTML = '<div style="padding:4px 0">' + rows.map(function(r) {
+        return '<div class="detail-row">' +
+          '<span class="detail-key">' + escapeHtml(r.label) + '</span>' +
+          '<span class="detail-value">' + escapeHtml(String(r.value)) + '</span>' +
+        '</div>';
+      }).join('') + '</div>';
+    }
+
+    loadUsage();
+  </script>
+</body>
+</html>

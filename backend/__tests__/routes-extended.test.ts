@@ -1,6 +1,7 @@
 import { createApp } from '../src/index';
 import { AuthService } from '../src/middleware/auth';
 import { UserModel } from '../src/models/User';
+import { OrganizationModel } from '../src/models/Organization';
 import http from 'http';
 import Database from 'better-sqlite3';
 
@@ -9,6 +10,7 @@ describe('Extended Route Coverage', () => {
   let db: Database.Database;
   let adminToken: string;
   let viewerToken: string;
+  let orgId: string;
 
   beforeAll(() => {
     const result = createApp(':memory:');
@@ -17,12 +19,16 @@ describe('Extended Route Coverage', () => {
 
     const authService = new AuthService('syncv-dev-secret-change-in-production');
     const userModel = new UserModel(db);
+    const orgModel = new OrganizationModel(db);
 
-    userModel.create({ id: 'u1', username: 'admin', password_hash: authService.hashPassword('pass'), role: 'admin' });
-    userModel.create({ id: 'u2', username: 'viewer', password_hash: authService.hashPassword('pass'), role: 'viewer' });
+    orgId = 'ext-test-org';
+    orgModel.create({ id: orgId, name: 'Ext Test Org', slug: 'ext-test' });
 
-    adminToken = authService.generateToken({ userId: 'u1', username: 'admin', role: 'admin' });
-    viewerToken = authService.generateToken({ userId: 'u2', username: 'viewer', role: 'viewer' });
+    userModel.create({ id: 'u1', username: 'admin', password_hash: authService.hashPassword('pass'), role: 'org_admin', org_id: orgId });
+    userModel.create({ id: 'u2', username: 'viewer', password_hash: authService.hashPassword('pass'), role: 'viewer', org_id: orgId });
+
+    adminToken = authService.generateToken({ userId: 'u1', username: 'admin', role: 'org_admin', orgId });
+    viewerToken = authService.generateToken({ userId: 'u2', username: 'viewer', role: 'viewer', orgId });
   });
 
   afterAll(() => { db.close(); });
@@ -160,13 +166,13 @@ describe('Extended Route Coverage', () => {
       expect(res.status).toBe(401);
     });
 
-    it('Protected route with malformed auth header returns 401', async () => {
+    it('Protected route with no auth header returns 401', async () => {
       const res = await makeRequest('GET', '/api/devices', undefined, undefined);
       expect(res.status).toBe(401);
     });
 
     it('Non-admin register attempt with viewer token returns 403', async () => {
-      const res = await makeRequest('POST', '/api/auth/register', { username: 'new', password: 'pass', role: 'admin' }, viewerToken);
+      const res = await makeRequest('POST', '/api/auth/register', { username: 'new', password: 'pass', role: 'org_admin' }, viewerToken);
       expect(res.status).toBe(403);
     });
   });

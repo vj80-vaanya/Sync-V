@@ -1,11 +1,8 @@
 import { createApp } from '../src/index';
-import { DeviceModel } from '../src/models/Device';
 import { UserModel } from '../src/models/User';
+import { OrganizationModel } from '../src/models/Organization';
 import { AuthService } from '../src/middleware/auth';
 import Database from 'better-sqlite3';
-
-// We need supertest-like testing. Since we don't have supertest, test via direct route logic.
-// Instead, let's test the createApp factory and routes using the Express app's handle method.
 
 describe('Backend API Routes', () => {
   let app: ReturnType<typeof createApp>['app'];
@@ -13,39 +10,48 @@ describe('Backend API Routes', () => {
   let authService: AuthService;
   let adminToken: string;
   let viewerToken: string;
+  let orgId: string;
 
   beforeAll(() => {
     const result = createApp(':memory:');
     app = result.app;
     db = result.db;
 
-    // Create auth service to generate tokens for testing
     authService = new AuthService('syncv-dev-secret-change-in-production');
 
-    // Create test users directly in DB
+    // Create an organization for the test users
+    const orgModel = new OrganizationModel(db);
+    orgId = 'test-org-1';
+    orgModel.create({ id: orgId, name: 'Test Org', slug: 'test-org' });
+
+    // Create test users with org context
     const userModel = new UserModel(db);
     userModel.create({
       id: 'user-admin',
       username: 'admin',
       password_hash: authService.hashPassword('admin123'),
-      role: 'admin',
+      role: 'org_admin',
+      org_id: orgId,
     });
     userModel.create({
       id: 'user-viewer',
       username: 'viewer',
       password_hash: authService.hashPassword('viewer123'),
       role: 'viewer',
+      org_id: orgId,
     });
 
     adminToken = authService.generateToken({
       userId: 'user-admin',
       username: 'admin',
-      role: 'admin',
+      role: 'org_admin',
+      orgId,
     });
     viewerToken = authService.generateToken({
       userId: 'user-viewer',
       username: 'viewer',
       role: 'viewer',
+      orgId,
     });
   });
 
@@ -53,7 +59,6 @@ describe('Backend API Routes', () => {
     db.close();
   });
 
-  // Helper: make a request to Express app using node http
   function makeRequest(
     method: string,
     path: string,
@@ -122,7 +127,7 @@ describe('Backend API Routes', () => {
       expect(res.status).toBe(200);
       expect(res.body.token).toBeDefined();
       expect(res.body.user.username).toBe('admin');
-      expect(res.body.user.role).toBe('admin');
+      expect(res.body.user.role).toBe('org_admin');
     });
 
     it('should reject invalid credentials', async () => {
@@ -140,12 +145,12 @@ describe('Backend API Routes', () => {
       expect(res.status).toBe(400);
     });
 
-    it('should register a new user', async () => {
+    it('should register a new user via org_admin', async () => {
       const res = await makeRequest('POST', '/api/auth/register', {
         username: 'newuser',
         password: 'pass123',
         role: 'technician',
-      });
+      }, adminToken);
       expect(res.status).toBe(201);
       expect(res.body.token).toBeDefined();
       expect(res.body.user.username).toBe('newuser');
@@ -155,7 +160,7 @@ describe('Backend API Routes', () => {
       const res = await makeRequest('POST', '/api/auth/register', {
         username: 'admin',
         password: 'pass123',
-      });
+      }, adminToken);
       expect(res.status).toBe(409);
     });
   });
@@ -366,7 +371,6 @@ describe('Backend API Routes', () => {
       expect(res.status).toBe(200);
       expect(res.body.length).toBeGreaterThan(0);
       expect(res.body[0].raw_data).toBeUndefined();
-      // But should include vendor and format
       expect(res.body[0].vendor).toBeDefined();
       expect(res.body[0].format).toBeDefined();
     });
@@ -386,7 +390,6 @@ describe('Backend API Routes', () => {
       );
       expect(res.status).toBe(201);
 
-      // Verify defaults
       const logRes = await makeRequest('GET', `/api/logs/${res.body.logId}`, undefined, viewerToken);
       expect(logRes.body.vendor).toBe('unknown');
       expect(logRes.body.format).toBe('text');
@@ -402,7 +405,7 @@ describe('Backend API Routes', () => {
       expect(res.body).toEqual([]);
     });
 
-    it('should upload firmware as admin', async () => {
+    it('should upload firmware as org_admin', async () => {
       const res = await makeRequest(
         'POST',
         '/api/firmware',
