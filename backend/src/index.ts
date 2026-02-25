@@ -55,7 +55,16 @@ if (!envJwtSecret) {
 }
 const JWT_SECRET = envJwtSecret || 'syncv-dev-secret-change-in-production';
 
-export function createApp(dbPath?: string): { app: express.Express; db: Database.Database } {
+export interface AppContext {
+  app: express.Express;
+  db: Database.Database;
+  anomalyService: AnomalyDetectionService;
+  healthService: DeviceHealthService;
+  orgModel: OrganizationModel;
+  webhookDispatcher: WebhookDispatcher;
+}
+
+export function createApp(dbPath?: string): AppContext {
   const app = express();
   app.set('trust proxy', 1);
   app.use(express.json({ limit: '10mb' }));
@@ -133,28 +142,18 @@ export function createApp(dbPath?: string): { app: express.Express; db: Database
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
-  return { app, db };
+  return { app, db, anomalyService, healthService, orgModel, webhookDispatcher };
 }
 
 if (require.main === module) {
-  const { app, db } = createApp();
+  const { app, anomalyService, healthService, orgModel, webhookDispatcher } = createApp();
 
   const server = http.createServer(app);
 
   // WebSocket service
   const wsService = new WebSocketService(server, JWT_SECRET);
 
-  // Scheduler
-  const orgModel = new OrganizationModel(db);
-  const logModel = new LogModel(db);
-  const deviceModel = new DeviceModel(db);
-  const anomalyModel = new AnomalyModel(db);
-  const healthModel = new DeviceHealthModel(db);
-  const firmwareModel = new FirmwareModel(db);
-  const webhookModel = new WebhookModel(db);
-  const anomalyService = new AnomalyDetectionService(anomalyModel, logModel, deviceModel);
-  const healthService = new DeviceHealthService(healthModel, deviceModel, logModel, anomalyModel, firmwareModel);
-  const webhookDispatcher = new WebhookDispatcher(webhookModel);
+  // Scheduler — reuses the same service instances from createApp()
   const scheduler = new Scheduler(anomalyService, healthService, orgModel, webhookDispatcher, wsService);
   scheduler.start();
 

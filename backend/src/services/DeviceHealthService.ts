@@ -6,6 +6,17 @@ import { FirmwareModel } from '../models/Firmware';
 
 const ERROR_KEYWORDS = /\b(ERROR|FATAL|CRITICAL|FAIL|exception|timeout)\b/i;
 
+function compareSemver(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const na = pa[i] || 0;
+    const nb = pb[i] || 0;
+    if (na !== nb) return nb - na; // descending: higher version first
+  }
+  return 0;
+}
+
 export interface HealthFactors {
   recency: number;
   errorRate: number;
@@ -105,7 +116,7 @@ export class DeviceHealthService {
     }
 
     // Factor 2: Error rate (25 points)
-    const recentLogs = this.logModel.getByDeviceId(device.id).slice(0, 10);
+    const recentLogs = this.logModel.getRecentByDeviceId(device.id, 10);
     let errorRateScore = 25;
     if (recentLogs.length > 0) {
       let totalLines = 0;
@@ -149,11 +160,13 @@ export class DeviceHealthService {
     if (device.firmware_version && device.org_id) {
       const allFirmware = this.firmwareModel.getByDeviceTypeAndOrg(device.type, device.org_id);
       if (allFirmware.length > 0) {
-        const latestVersion = allFirmware[0].version;
+        // Sort by semver to ensure correct ordering (DB sorts by release_date, not version)
+        const sorted = [...allFirmware].sort((a, b) => compareSemver(a.version, b.version));
+        const latestVersion = sorted[0].version;
         if (device.firmware_version === latestVersion) {
           firmwareCurrency = 15;
         } else {
-          const index = allFirmware.findIndex(f => f.version === device.firmware_version);
+          const index = sorted.findIndex(f => f.version === device.firmware_version);
           if (index === -1) firmwareCurrency = 0;
           else if (index >= 2) firmwareCurrency = 0;
           else firmwareCurrency = Math.round(15 * (1 - index / 2));

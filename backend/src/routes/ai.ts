@@ -16,6 +16,17 @@ export function createAIRoutes(
   const refreshCooldowns = new Map<string, number>();
   const REFRESH_COOLDOWN_MS = 60_000;
 
+  // Prune expired cooldowns every 5 minutes to prevent unbounded growth
+  const pruneInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [key, ts] of refreshCooldowns) {
+      if (now - ts >= REFRESH_COOLDOWN_MS) {
+        refreshCooldowns.delete(key);
+      }
+    }
+  }, 5 * 60_000);
+  pruneInterval.unref();
+
   // GET /api/ai/anomalies — list anomalies (org-scoped, paginated)
   router.get('/anomalies', (req: AuthenticatedRequest, res: Response) => {
     if (!req.orgId) {
@@ -30,18 +41,26 @@ export function createAIRoutes(
     res.json({ data, total, page, limit });
   });
 
-  // GET /api/ai/anomalies/device/:id — anomalies for a device
+  // GET /api/ai/anomalies/device/:id — anomalies for a device (org-scoped)
   router.get('/anomalies/device/:id', (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     if (!isValidDeviceId(id)) {
       return res.status(400).json({ error: 'Invalid device ID format' });
     }
-    const anomalies = anomalyService.getDeviceAnomalies(id);
+    const anomalies = anomalyService.getDeviceAnomalies(id)
+      .filter(a => !req.orgId || a.org_id === req.orgId);
     res.json(anomalies);
   });
 
-  // POST /api/ai/anomalies/:id/resolve — mark anomaly resolved
+  // POST /api/ai/anomalies/:id/resolve — mark anomaly resolved (org-scoped)
   router.post('/anomalies/:id/resolve', (req: AuthenticatedRequest, res: Response) => {
+    // Verify anomaly belongs to requesting org before resolving
+    const anomalies = req.orgId ? anomalyService.getAnomalies(req.orgId) : [];
+    const anomaly = anomalies.find(a => a.id === req.params.id);
+    if (req.orgId && !anomaly) {
+      return res.status(404).json({ error: 'Anomaly not found' });
+    }
+
     const resolved = anomalyService.resolveAnomaly(req.params.id);
     if (!resolved) {
       return res.status(404).json({ error: 'Anomaly not found' });
@@ -69,7 +88,7 @@ export function createAIRoutes(
     res.json(health);
   });
 
-  // GET /api/ai/health/:deviceId — single device health + history
+  // GET /api/ai/health/:deviceId — single device health + history (org-scoped)
   router.get('/health/:deviceId', (req: AuthenticatedRequest, res: Response) => {
     const { deviceId } = req.params;
     if (!isValidDeviceId(deviceId)) {
@@ -77,6 +96,13 @@ export function createAIRoutes(
     }
 
     const health = healthService.getHealth(deviceId);
+    // Verify the device belongs to the requesting org
+    if (health && req.orgId) {
+      const fleetHealth = healthService.getFleetHealth(req.orgId);
+      if (!fleetHealth.some(h => h.device_id === deviceId)) {
+        return res.status(404).json({ error: 'Device not found' });
+      }
+    }
     const history = healthService.getHistory(deviceId, 30);
     res.json({ current: health || null, history });
   });

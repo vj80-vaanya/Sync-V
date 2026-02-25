@@ -73,6 +73,11 @@ export class LogModel {
     return stmt.all(deviceId) as LogRecord[];
   }
 
+  getRecentByDeviceId(deviceId: string, limit: number): LogRecord[] {
+    const stmt = this.db.prepare('SELECT * FROM logs WHERE device_id = ? ORDER BY uploaded_at DESC LIMIT ?');
+    return stmt.all(deviceId, limit) as LogRecord[];
+  }
+
   getAll(): LogRecord[] {
     const stmt = this.db.prepare('SELECT * FROM logs ORDER BY uploaded_at DESC');
     return stmt.all() as LogRecord[];
@@ -125,6 +130,11 @@ export class LogModel {
   getDistinctFormats(): string[] {
     const rows = this.db.prepare('SELECT DISTINCT format FROM logs ORDER BY format').all() as any[];
     return rows.map((r) => r.format);
+  }
+
+  updateMetadata(id: string, metadata: string): boolean {
+    const result = this.db.prepare('UPDATE logs SET metadata = ? WHERE id = ?').run(metadata, id);
+    return result.changes > 0;
   }
 
   delete(id: string): boolean {

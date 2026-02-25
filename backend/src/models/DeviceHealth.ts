@@ -74,11 +74,12 @@ export class DeviceHealthModel {
   }
 
   getScoreFromAgo(deviceId: string, hoursAgo: number): number | undefined {
+    const hoursParam = `-${Math.abs(Math.floor(hoursAgo))} hours`;
     const row = this.db.prepare(`
       SELECT score FROM device_health_history
-      WHERE device_id = ? AND created_at <= datetime('now', ? || ' hours')
+      WHERE device_id = ? AND created_at <= datetime('now', ?)
       ORDER BY created_at DESC LIMIT 1
-    `).get(deviceId, `-${hoursAgo}`) as any;
+    `).get(deviceId, hoursParam) as any;
     return row?.score;
   }
 

@@ -89,10 +89,15 @@ export class RateLimiter {
   private requests: Map<string, number[]> = new Map();
   private maxRequests: number;
   private windowMs: number;
+  private pruneTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(maxRequests: number = 100, windowMs: number = 60000) {
     this.maxRequests = maxRequests;
     this.windowMs = windowMs;
+
+    // Prune stale entries every 5 minutes to prevent unbounded growth
+    this.pruneTimer = setInterval(() => this.prune(), 5 * 60000);
+    this.pruneTimer.unref();
   }
 
   isAllowed(clientId: string): boolean {
@@ -114,6 +119,25 @@ export class RateLimiter {
 
   reset(clientId: string): void {
     this.requests.delete(clientId);
+  }
+
+  private prune(): void {
+    const now = Date.now();
+    for (const [key, timestamps] of this.requests) {
+      const valid = timestamps.filter(t => now - t < this.windowMs);
+      if (valid.length === 0) {
+        this.requests.delete(key);
+      } else {
+        this.requests.set(key, valid);
+      }
+    }
+  }
+
+  destroy(): void {
+    if (this.pruneTimer) {
+      clearInterval(this.pruneTimer);
+      this.pruneTimer = null;
+    }
   }
 }
 

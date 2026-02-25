@@ -158,6 +158,20 @@ export function createDatabase(dbPath?: string): Database.Database {
       score INTEGER NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- Performance indexes
+    CREATE INDEX IF NOT EXISTS idx_devices_org_id ON devices(org_id);
+    CREATE INDEX IF NOT EXISTS idx_logs_device_id ON logs(device_id);
+    CREATE INDEX IF NOT EXISTS idx_logs_org_id ON logs(org_id);
+    CREATE INDEX IF NOT EXISTS idx_logs_uploaded_at ON logs(uploaded_at);
+    CREATE INDEX IF NOT EXISTS idx_firmware_org_id ON firmware(org_id);
+    CREATE INDEX IF NOT EXISTS idx_firmware_device_type_org ON firmware(device_type, org_id);
+    CREATE INDEX IF NOT EXISTS idx_anomalies_org_id ON anomalies(org_id);
+    CREATE INDEX IF NOT EXISTS idx_anomalies_device_id ON anomalies(device_id);
+    CREATE INDEX IF NOT EXISTS idx_anomalies_resolved ON anomalies(org_id, resolved);
+    CREATE INDEX IF NOT EXISTS idx_device_health_history_device ON device_health_history(device_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_org_id ON audit_logs(org_id);
+    CREATE INDEX IF NOT EXISTS idx_users_org_id ON users(org_id);
   `);
 
   // Migration: add new columns to existing tables

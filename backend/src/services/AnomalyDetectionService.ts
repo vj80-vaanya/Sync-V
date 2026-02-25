@@ -24,8 +24,8 @@ export class AnomalyDetectionService {
     const errorLines = lines.filter(l => ERROR_KEYWORDS.test(l));
     const errorRate = errorLines.length / lines.length;
 
-    // Check error spike against device's historical average
-    const historicalLogs = this.logModel.getByDeviceId(logRecord.device_id).slice(0, 20);
+    // Check error spike against device's historical average (limit query to 20 most recent)
+    const historicalLogs = this.logModel.getRecentByDeviceId(logRecord.device_id, 20);
     const historicalRates: number[] = [];
     for (const log of historicalLogs) {
       if (log.id === logRecord.id) continue;

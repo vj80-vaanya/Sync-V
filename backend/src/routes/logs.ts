@@ -115,13 +115,17 @@ export function createLogRoutes(
             }
           }
         }
-      } catch {}
+      } catch (err) {
+        console.error('Anomaly detection failed for log', result.logId, err);
+      }
     }
 
     if (logSummaryService && result.logId) {
       try {
         logSummaryService.summarizeAndStore(result.logId);
-      } catch {}
+      } catch (err) {
+        console.error('Log summarization failed for log', result.logId, err);
+      }
     }
 
     res.status(201).json({ logId: result.logId });

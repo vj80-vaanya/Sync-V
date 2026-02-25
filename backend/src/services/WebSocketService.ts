@@ -32,7 +32,12 @@ export class WebSocketService {
           return sock.terminate();
         }
         sock.isAlive = false;
-        sock.ping();
+        try {
+          sock.ping();
+        } catch {
+          this.removeConnection(sock);
+          sock.terminate();
+        }
       });
     }, 30000);
   }

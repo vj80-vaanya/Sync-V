@@ -116,11 +116,8 @@ export class LogSummaryService {
 
     metadata.ai_summary = summary;
 
-    // Update log metadata with the summary
-    const stmt = (this.logModel as any).db.prepare(
-      'UPDATE logs SET metadata = ? WHERE id = ?'
-    );
-    stmt.run(JSON.stringify(metadata), logId);
+    // Update log metadata with the summary via model method
+    this.logModel.updateMetadata(logId, JSON.stringify(metadata));
 
     return summary;
   }
