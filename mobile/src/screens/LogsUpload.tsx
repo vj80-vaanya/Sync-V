@@ -82,11 +82,15 @@ export const LogsUploadScreen: React.FC<LogsUploadProps> = ({ logsService, drive
   const loadLogs = async () => {
     setRefreshing(true);
     try {
-      const driveLogs = await logsService.getLogsFromDrive();
-      setLogs(driveLogs);
+      // Try drive logs first, fall back to cloud logs
+      let allLogs = await logsService.getLogsFromDrive();
+      if (allLogs.length === 0) {
+        allLogs = await logsService.getLogsFromCloud();
+      }
+      setLogs(allLogs);
 
       const newStatuses: Record<string, LogUploadStatus> = {};
-      for (const log of driveLogs) {
+      for (const log of allLogs) {
         const status = logsService.getLogStatus(log.filename);
         if (status) newStatuses[log.filename] = status;
       }
@@ -96,6 +100,8 @@ export const LogsUploadScreen: React.FC<LogsUploadProps> = ({ logsService, drive
     }
     setRefreshing(false);
   };
+
+  useEffect(() => { loadLogs(); }, []);
 
   const handleUpload = async (log: LogFile) => {
     const result = await logsService.uploadToCloud(log);

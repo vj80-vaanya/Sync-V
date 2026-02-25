@@ -37,6 +37,18 @@ export class LogsService {
     return [...this.mockDriveLogs];
   }
 
+  async getLogsFromCloud(): Promise<LogFile[]> {
+    if (!this.cloudApi || !this.cloudApi.isAuthenticated()) return [];
+    const result = await this.cloudApi.get<any[]>(CLOUD_CONFIG.logsPath);
+    if (!result.ok || !result.data) return [];
+    return result.data.map((log: any) => ({
+      filename: log.filename || '',
+      size: log.size || 0,
+      deviceId: log.device_id || '',
+      collectedAt: log.created_at || '',
+    }));
+  }
+
   async uploadToCloud(logFile: LogFile): Promise<UploadResult> {
     // Try real cloud API if available and authenticated
     if (this.cloudApi && this.cloudApi.isAuthenticated()) {
