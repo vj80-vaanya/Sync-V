@@ -1,0 +1,34 @@
+[Unit]
+Description=Sync-V Drive Service
+After=network-online.target sys-kernel-config.mount
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/syncv-drive
+Restart=always
+RestartSec=5
+User=root
+
+# Directories
+Environment=SYNCV_LOG_DIR=/var/syncv/logs
+Environment=SYNCV_FW_STAGING=/var/syncv/firmware/staging
+Environment=SYNCV_FW_INSTALL=/var/syncv/firmware/installed
+Environment=SYNCV_POLL_INTERVAL=30
+
+# USB gadget (Pi shows up as pendrive)
+Environment=SYNCV_USB_GADGET=1
+Environment=SYNCV_USB_IMAGE=/var/syncv/usb/drive.img
+Environment=SYNCV_USB_MOUNT=/var/syncv/usb/mnt
+Environment=SYNCV_USB_SIZE_MB=64
+
+# Security — set these in /etc/syncv.env and uncomment EnvironmentFile
+# EnvironmentFile=/etc/syncv.env
+Environment=SYNCV_AUTH_TOKEN=changeme
+
+# Hardening (root needed for mount/modprobe/configfs)
+NoNewPrivileges=false
+ReadWritePaths=/var/syncv /sys/kernel/config
+
+[Install]
+WantedBy=multi-user.target

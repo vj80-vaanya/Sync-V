@@ -1,0 +1,30 @@
+# Multi-stage build: cross-compile for Raspberry Pi Zero W (ARMv6 armhf)
+#
+# Build:  docker build -f Dockerfile.pi -t syncv-drive-pi .
+# Extract: docker run --rm syncv-drive-pi cat /out/syncv-drive > syncv-drive && chmod +x syncv-drive
+# Deploy:  scp syncv-drive pi@<pi-ip>:/home/pi/
+
+# --- Stage 1: Cross-compile ---
+FROM debian:bookworm-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake g++-arm-linux-gnueabihf gcc-arm-linux-gnueabihf \
+    ca-certificates make \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY CMakeLists.txt ./
+COPY cmake/ ./cmake/
+COPY src/ ./src/
+COPY tests/ ./tests/
+
+# Cross-compile for ARM — skip tests (can't run ARM binaries on x86)
+RUN cmake -B build-pi \
+    -DCMAKE_TOOLCHAIN_FILE=cmake/arm-linux-gnueabihf.cmake \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_TESTING=OFF \
+    && cmake --build build-pi --target syncv_drive_bin -j$(nproc)
+
+# --- Stage 2: Minimal output image ---
+FROM scratch
+COPY --from=builder /app/build-pi/syncv-drive /out/syncv-drive
