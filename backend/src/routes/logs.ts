@@ -5,12 +5,17 @@ import { AuthenticatedRequest } from '../middleware/authMiddleware';
 import { AuditService } from '../services/AuditService';
 import { WebhookDispatcher } from '../services/WebhookDispatcher';
 import { QuotaService } from '../services/QuotaService';
+import { AnomalyDetectionService } from '../services/AnomalyDetectionService';
+import { LogSummaryService } from '../services/LogSummaryService';
 
 export function createLogRoutes(
   logIngestion: LogIngestionService,
   auditService?: AuditService,
   webhookDispatcher?: WebhookDispatcher,
   quotaService?: QuotaService,
+  anomalyService?: AnomalyDetectionService,
+  logSummaryService?: LogSummaryService,
+  wsService?: { broadcastAnomaly(orgId: string, anomaly: any): void },
 ): Router {
   const router = Router();
 
@@ -89,6 +94,34 @@ export function createLogRoutes(
 
     if (webhookDispatcher && req.orgId) {
       webhookDispatcher.dispatch(req.orgId, 'log.uploaded', { logId: result.logId, deviceId, filename });
+    }
+
+    // AI post-ingest hooks
+    if (anomalyService && result.logId) {
+      try {
+        const logRecord = logIngestion.getLogById(result.logId);
+        if (logRecord) {
+          const anomalies = anomalyService.analyzeLog(logRecord);
+          if (anomalies.length > 0 && webhookDispatcher && req.orgId) {
+            webhookDispatcher.dispatch(req.orgId, 'anomaly.detected', {
+              logId: result.logId,
+              deviceId,
+              anomalies: anomalies.map(a => ({ id: a.id, type: a.type, severity: a.severity })),
+            });
+          }
+          if (anomalies.length > 0 && wsService && req.orgId) {
+            for (const anomaly of anomalies) {
+              wsService.broadcastAnomaly(req.orgId, anomaly);
+            }
+          }
+        }
+      } catch {}
+    }
+
+    if (logSummaryService && result.logId) {
+      try {
+        logSummaryService.summarizeAndStore(result.logId);
+      } catch {}
     }
 
     res.status(201).json({ logId: result.logId });

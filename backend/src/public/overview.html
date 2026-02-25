@@ -39,9 +39,26 @@
       <div id="device-types"><span class="loading">Loading...</span></div>
     </div>
 
-    <div class="card">
+    <div class="card" style="margin-bottom: 24px">
       <div class="card-title">Firmware Packages</div>
       <div id="firmware-summary"><span class="loading">Loading...</span></div>
+    </div>
+
+    <div class="card" id="ai-card" style="display:none">
+      <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+        <span>AI Health Overview</span>
+        <a href="/dashboard/ai.html" class="btn btn-sm btn-outline">View AI Insights</a>
+      </div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px">
+        <div class="stat-card stat-border-green" style="flex:1;min-width:140px">
+          <div class="stat-value" style="color:var(--success);font-size:1.5rem" id="ai-avg-health">-</div>
+          <div class="stat-label">Avg Health Score</div>
+        </div>
+        <div class="stat-card stat-border-red" style="flex:1;min-width:140px">
+          <div class="stat-value" style="color:var(--danger);font-size:1.5rem" id="ai-anomalies">-</div>
+          <div class="stat-label">Unresolved Anomalies</div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -169,6 +186,15 @@
             }
           });
         }
+      }
+
+      // --- Load AI overview data ---
+      var aiData = await apiGet('/api/dashboard/ai-overview');
+      if (aiData) {
+        var aiCard = document.getElementById('ai-card');
+        aiCard.style.display = 'block';
+        document.getElementById('ai-avg-health').textContent = aiData.averageHealth || 100;
+        document.getElementById('ai-anomalies').textContent = aiData.unresolvedAnomalies || 0;
       }
 
       // --- Load logs for area chart ---

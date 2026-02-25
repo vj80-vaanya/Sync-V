@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sync-V - AI Insights</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/dashboard/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div id="nav-bar"></div>
+
+  <div class="page">
+    <h1 class="page-title">AI Insights</h1>
+    <p class="page-subtitle">Anomaly detection, device health scores, and log analysis</p>
+
+    <div class="stats-grid" id="stats-grid"></div>
+
+    <div class="chart-grid">
+      <div class="chart-card">
+        <div class="chart-title">Fleet Health Scores</div>
+        <div class="chart-wrap"><canvas id="chart-health"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Anomalies by Severity</div>
+        <div class="chart-wrap"><canvas id="chart-anomaly-severity"></canvas></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom: 24px">
+      <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+        <span>Unresolved Anomalies</span>
+        <span class="badge badge-muted" id="anomaly-count">0</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Severity</th>
+              <th>Type</th>
+              <th>Device</th>
+              <th>Message</th>
+              <th>Detected</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="anomaly-tbody">
+            <tr><td colspan="6"><span class="loading">Loading...</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+        <span>Device Health Scores</span>
+        <button class="btn btn-sm btn-outline" id="refresh-health-btn">Refresh Scores</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Device ID</th>
+              <th>Score</th>
+              <th>Trend</th>
+              <th>Recency</th>
+              <th>Error Rate</th>
+              <th>Log Freq</th>
+              <th>Firmware</th>
+              <th>Anomalies</th>
+            </tr>
+          </thead>
+          <tbody id="health-tbody">
+            <tr><td colspan="8"><span class="loading">Loading...</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="/dashboard/js/auth.js"></script>
+  <script src="/dashboard/js/api.js"></script>
+  <script src="/dashboard/js/app.js"></script>
+  <script>
+    if (!AUTH.requireAuth()) throw new Error('Not authenticated');
+    renderNavBar('ai');
+    renderFooter();
+
+    document.getElementById('stats-grid').innerHTML = skeletonCards(4);
+
+    var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    Chart.defaults.font.family = "'Inter', sans-serif";
+    Chart.defaults.color = isDark ? '#94a3b8' : '#64748b';
+    var gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)';
+
+    function severityBadge(severity) {
+      var map = { critical: 'danger', high: 'danger', medium: 'warning', low: 'muted' };
+      var cls = map[severity] || 'muted';
+      return '<span class="badge badge-' + cls + '">' + escapeHtml(severity) + '</span>';
+    }
+
+    function typeBadge(type) {
+      var map = { error_spike: 'danger', new_pattern: 'info', volume_anomaly: 'warning', device_silent: 'muted' };
+      var cls = map[type] || 'muted';
+      var labels = { error_spike: 'Error Spike', new_pattern: 'New Pattern', volume_anomaly: 'Volume', device_silent: 'Silent' };
+      return '<span class="badge badge-' + cls + '">' + (labels[type] || escapeHtml(type)) + '</span>';
+    }
+
+    function scoreColor(score) {
+      if (score >= 80) return 'var(--success)';
+      if (score >= 50) return '#eab308';
+      return 'var(--danger)';
+    }
+
+    function trendIcon(trend) {
+      if (trend === 'improving') return '<span style="color:var(--success)">&#9650; Improving</span>';
+      if (trend === 'degrading') return '<span style="color:var(--danger)">&#9660; Degrading</span>';
+      return '<span style="color:var(--text-muted)">&#8212; Stable</span>';
+    }
+
+    function scoreBar(score) {
+      var color = scoreColor(score);
+      return '<div style="display:flex;align-items:center;gap:8px">' +
+        '<div style="flex:1;background:var(--bg-tertiary);border-radius:4px;height:8px;min-width:60px">' +
+          '<div style="width:' + score + '%;height:100%;border-radius:4px;background:' + color + '"></div>' +
+        '</div>' +
+        '<span style="font-weight:600;color:' + color + '">' + score + '</span>' +
+      '</div>';
+    }
+
+    async function resolveAnomaly(id) {
+      var result = await apiPost('/api/ai/anomalies/' + id + '/resolve');
+      if (result) {
+        showToast('Anomaly resolved', 'success');
+        loadData();
+      }
+    }
+
+    async function loadData() {
+      var overview = await apiGet('/api/dashboard/ai-overview');
+      if (!overview) return;
+
+      // Stat cards
+      document.getElementById('stats-grid').innerHTML =
+        '<div class="stat-card stat-border-green">' +
+          '<div class="stat-icon" style="background:var(--success-bg);color:var(--success)">' + ICONS.online + '</div>' +
+          '<div class="stat-value" style="color:var(--success)">' + (overview.averageHealth || 100) + '</div>' +
+          '<div class="stat-label">Avg Health Score</div>' +
+        '</div>' +
+        '<div class="stat-card stat-border-red">' +
+          '<div class="stat-icon" style="background:var(--danger-bg);color:var(--danger)">' + ICONS.offline + '</div>' +
+          '<div class="stat-value" style="color:var(--danger)">' + (overview.unresolvedAnomalies || 0) + '</div>' +
+          '<div class="stat-label">Unresolved Anomalies</div>' +
+        '</div>' +
+        '<div class="stat-card stat-border-blue">' +
+          '<div class="stat-icon" style="background:#eff6ff;color:#3b82f6">' + ICONS.logsTotal + '</div>' +
+          '<div class="stat-value" style="color:#3b82f6">' + (overview.totalAnomaliesThisWeek || 0) + '</div>' +
+          '<div class="stat-label">Anomalies This Week</div>' +
+        '</div>' +
+        '<div class="stat-card stat-border-indigo">' +
+          '<div class="stat-icon" style="background:var(--primary-50);color:var(--primary)">' + ICONS.warning + '</div>' +
+          '<div class="stat-value">' + (overview.devicesNeedingAttention || 0) + '</div>' +
+          '<div class="stat-label">Devices Need Attention</div>' +
+        '</div>';
+
+      staggerCards('#stats-grid');
+
+      // Health chart
+      var healthScores = overview.healthScores || [];
+      if (healthScores.length > 0) {
+        var labels = healthScores.map(function(h) { return h.deviceId.substring(0, 12); });
+        var scores = healthScores.map(function(h) { return h.score; });
+        var colors = scores.map(function(s) {
+          if (s >= 80) return 'rgba(34,197,94,0.8)';
+          if (s >= 50) return 'rgba(234,179,8,0.8)';
+          return 'rgba(239,68,68,0.8)';
+        });
+
+        new Chart(document.getElementById('chart-health'), {
+          type: 'bar',
+          data: {
+            labels: labels,
+            datasets: [{
+              label: 'Health Score',
+              data: scores,
+              backgroundColor: colors,
+              borderRadius: 8,
+              borderSkipped: false,
+              barThickness: 40
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              y: { beginAtZero: true, max: 100, grid: { color: gridColor } },
+              x: { grid: { display: false } }
+            }
+          }
+        });
+      }
+
+      // Anomaly severity chart
+      var anomalies = overview.recentAnomalies || [];
+      var sevCounts = { critical: 0, high: 0, medium: 0, low: 0 };
+      anomalies.forEach(function(a) { sevCounts[a.severity] = (sevCounts[a.severity] || 0) + 1; });
+
+      new Chart(document.getElementById('chart-anomaly-severity'), {
+        type: 'doughnut',
+        data: {
+          labels: ['Critical', 'High', 'Medium', 'Low'],
+          datasets: [{
+            data: [sevCounts.critical, sevCounts.high, sevCounts.medium, sevCounts.low],
+            backgroundColor: ['#dc2626', '#ef4444', '#eab308', '#94a3b8'],
+            borderWidth: 0,
+            hoverOffset: 8
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '65%',
+          plugins: {
+            legend: { position: 'bottom', labels: { padding: 16, usePointStyle: true, pointStyleWidth: 10 } }
+          }
+        }
+      });
+
+      // Anomaly table
+      document.getElementById('anomaly-count').textContent = anomalies.length;
+      var anomalyHtml = '';
+      if (anomalies.length === 0) {
+        anomalyHtml = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:24px">No unresolved anomalies</td></tr>';
+      } else {
+        anomalies.forEach(function(a) {
+          anomalyHtml += '<tr>' +
+            '<td>' + severityBadge(a.severity) + '</td>' +
+            '<td>' + typeBadge(a.type) + '</td>' +
+            '<td><code>' + escapeHtml(a.device_id.substring(0, 16)) + '</code></td>' +
+            '<td>' + escapeHtml(a.message.substring(0, 80)) + '</td>' +
+            '<td>' + formatDate(a.created_at) + '</td>' +
+            '<td><button class="btn btn-sm btn-outline" onclick="resolveAnomaly(\'' + a.id + '\')">Resolve</button></td>' +
+          '</tr>';
+        });
+      }
+      document.getElementById('anomaly-tbody').innerHTML = anomalyHtml;
+
+      // Health table
+      var healthHtml = '';
+      if (healthScores.length === 0) {
+        healthHtml = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:24px">No health data — click Refresh Scores</td></tr>';
+      } else {
+        healthScores.forEach(function(h) {
+          var f = h.factors || {};
+          healthHtml += '<tr>' +
+            '<td><code>' + escapeHtml(h.deviceId.substring(0, 16)) + '</code></td>' +
+            '<td>' + scoreBar(h.score) + '</td>' +
+            '<td>' + trendIcon(h.trend) + '</td>' +
+            '<td>' + (f.recency !== undefined ? f.recency + '/25' : '-') + '</td>' +
+            '<td>' + (f.errorRate !== undefined ? f.errorRate + '/25' : '-') + '</td>' +
+            '<td>' + (f.logFrequency !== undefined ? f.logFrequency + '/20' : '-') + '</td>' +
+            '<td>' + (f.firmwareCurrency !== undefined ? f.firmwareCurrency + '/15' : '-') + '</td>' +
+            '<td>' + (f.anomalyCount !== undefined ? f.anomalyCount + '/15' : '-') + '</td>' +
+          '</tr>';
+        });
+      }
+      document.getElementById('health-tbody').innerHTML = healthHtml;
+    }
+
+    document.getElementById('refresh-health-btn').addEventListener('click', async function() {
+      this.disabled = true;
+      this.textContent = 'Refreshing...';
+      await apiPost('/api/ai/health/refresh');
+      showToast('Health scores refreshed', 'success');
+      this.disabled = false;
+      this.textContent = 'Refresh Scores';
+      loadData();
+    });
+
+    loadData();
+  </script>
+</body>
+</html>

@@ -130,6 +130,34 @@ export function createDatabase(dbPath?: string): Database.Database {
       failure_count INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS anomalies (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      org_id TEXT REFERENCES organizations(id),
+      type TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      message TEXT NOT NULL,
+      log_id TEXT,
+      details TEXT DEFAULT '{}',
+      resolved INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS device_health (
+      device_id TEXT PRIMARY KEY REFERENCES devices(id),
+      score INTEGER NOT NULL DEFAULT 100,
+      factors TEXT DEFAULT '{}',
+      trend TEXT DEFAULT 'stable',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS device_health_history (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      score INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   // Migration: add new columns to existing tables

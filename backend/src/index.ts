@@ -1,3 +1,4 @@
+import http from 'http';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import path from 'path';
@@ -13,6 +14,8 @@ import { ClusterModel } from './models/Cluster';
 import { AuditLogModel } from './models/AuditLog';
 import { ApiKeyModel } from './models/ApiKey';
 import { WebhookModel } from './models/Webhook';
+import { AnomalyModel } from './models/Anomaly';
+import { DeviceHealthModel } from './models/DeviceHealth';
 import { DeviceRegistry } from './services/DeviceRegistry';
 import { LogIngestionService } from './services/LogIngestion';
 import { FirmwareDistributionService } from './services/FirmwareDistribution';
@@ -21,6 +24,11 @@ import { AuditService } from './services/AuditService';
 import { WebhookDispatcher } from './services/WebhookDispatcher';
 import { QuotaService } from './services/QuotaService';
 import { PlatformDashboardService } from './services/PlatformDashboardService';
+import { AnomalyDetectionService } from './services/AnomalyDetectionService';
+import { DeviceHealthService } from './services/DeviceHealthService';
+import { LogSummaryService } from './services/LogSummaryService';
+import { WebSocketService } from './services/WebSocketService';
+import { Scheduler } from './services/Scheduler';
 import { AuthService, RateLimiter, FailedLoginTracker } from './middleware/auth';
 import { createAuthMiddleware, requireOrgAccess, requirePlatformAdmin } from './middleware/authMiddleware';
 import { createDeviceRoutes } from './routes/devices';
@@ -31,6 +39,7 @@ import { createDashboardRoutes } from './routes/dashboard';
 import { createPlatformRoutes } from './routes/platform';
 import { createOrgRoutes } from './routes/org';
 import { createClusterRoutes } from './routes/clusters';
+import { createAIRoutes } from './routes/ai';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const DB_PATH = process.env.DB_PATH || ':memory:';
@@ -64,6 +73,8 @@ export function createApp(dbPath?: string): { app: express.Express; db: Database
   const auditLogModel = new AuditLogModel(db);
   const apiKeyModel = new ApiKeyModel(db);
   const webhookModel = new WebhookModel(db);
+  const anomalyModel = new AnomalyModel(db);
+  const healthModel = new DeviceHealthModel(db);
 
   // Initialize services
   const deviceRegistry = new DeviceRegistry(deviceModel);
@@ -77,6 +88,9 @@ export function createApp(dbPath?: string): { app: express.Express; db: Database
   const webhookDispatcher = new WebhookDispatcher(webhookModel);
   const quotaService = new QuotaService(orgModel, deviceModel, logModel, userModel, webhookDispatcher);
   const platformDashboard = new PlatformDashboardService(orgModel, deviceModel, logModel, firmwareModel, userModel);
+  const anomalyService = new AnomalyDetectionService(anomalyModel, logModel, deviceModel);
+  const healthService = new DeviceHealthService(healthModel, deviceModel, logModel, anomalyModel, firmwareModel);
+  const logSummaryService = new LogSummaryService(logModel);
 
   // Rate limiting middleware
   app.use((req, res, next) => {
@@ -104,9 +118,10 @@ export function createApp(dbPath?: string): { app: express.Express; db: Database
 
   // Protected routes (org-scoped)
   app.use('/api/devices', requireAuth('viewer'), createDeviceRoutes(deviceRegistry, deviceKeyModel, quotaService, auditService, webhookDispatcher));
-  app.use('/api/logs', requireAuth('viewer'), requireOrgAccess, createLogRoutes(logIngestion, auditService, webhookDispatcher, quotaService));
+  app.use('/api/logs', requireAuth('viewer'), requireOrgAccess, createLogRoutes(logIngestion, auditService, webhookDispatcher, quotaService, anomalyService, logSummaryService));
   app.use('/api/firmware', requireAuth('viewer'), requireOrgAccess, createFirmwareRoutes(firmwareDistribution, auditService, webhookDispatcher));
-  app.use('/api/dashboard', requireAuth('viewer'), requireOrgAccess, createDashboardRoutes(dashboardService));
+  app.use('/api/dashboard', requireAuth('viewer'), requireOrgAccess, createDashboardRoutes(dashboardService, healthService, anomalyService));
+  app.use('/api/ai', requireAuth('viewer'), requireOrgAccess, createAIRoutes(anomalyService, healthService, logSummaryService));
 
   // Dashboard web UI (static files)
   app.use('/dashboard/platform', express.static(path.join(__dirname, '..', 'src', 'public', 'platform')));
@@ -122,8 +137,28 @@ export function createApp(dbPath?: string): { app: express.Express; db: Database
 }
 
 if (require.main === module) {
-  const { app } = createApp();
-  app.listen(PORT, () => {
+  const { app, db } = createApp();
+
+  const server = http.createServer(app);
+
+  // WebSocket service
+  const wsService = new WebSocketService(server, JWT_SECRET);
+
+  // Scheduler
+  const orgModel = new OrganizationModel(db);
+  const logModel = new LogModel(db);
+  const deviceModel = new DeviceModel(db);
+  const anomalyModel = new AnomalyModel(db);
+  const healthModel = new DeviceHealthModel(db);
+  const firmwareModel = new FirmwareModel(db);
+  const webhookModel = new WebhookModel(db);
+  const anomalyService = new AnomalyDetectionService(anomalyModel, logModel, deviceModel);
+  const healthService = new DeviceHealthService(healthModel, deviceModel, logModel, anomalyModel, firmwareModel);
+  const webhookDispatcher = new WebhookDispatcher(webhookModel);
+  const scheduler = new Scheduler(anomalyService, healthService, orgModel, webhookDispatcher, wsService);
+  scheduler.start();
+
+  server.listen(PORT, () => {
     console.log(`Sync-V backend running on port ${PORT}`);
   });
 }

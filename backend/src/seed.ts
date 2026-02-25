@@ -184,6 +184,68 @@ async function seed(): Promise<void> {
     'INSERT INTO users (id, username, password_hash, role, org_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
   ).run(org2AdminId, 'beta-admin', await hashPassword('beta123'), 'org_admin', org2Id, now, now);
 
+  // --- Webhook with anomaly.detected event ---
+  db.prepare(
+    'INSERT INTO webhooks (id, org_id, url, secret, events) VALUES (?, ?, ?, ?, ?)'
+  ).run(uuidv4(), orgId, 'https://hooks.acme.example.com/syncv', 'whsec_acme_demo_secret', JSON.stringify(['anomaly.detected', 'log.uploaded']));
+
+  // --- AI Demo Data: Anomalies ---
+  const anomalyInsert = db.prepare(
+    'INSERT INTO anomalies (id, device_id, org_id, type, severity, message, log_id, details) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  );
+  anomalyInsert.run(uuidv4(), devices[0].id, orgId, 'error_spike', 'high',
+    'Error rate 33.3% is 5.2x the historical average of 6.4%', null,
+    JSON.stringify({ errorRate: 0.333, avgErrorRate: 0.064, magnitude: 5.2 }));
+  anomalyInsert.run(uuidv4(), devices[1].id, orgId, 'new_pattern', 'medium',
+    '2 new error pattern(s) detected: pressure drop detected delta=-8.2psi', null,
+    JSON.stringify({ newErrors: ['pressure drop detected delta=-8.2psi', 'recovery failed after 3 attempts'], count: 2 }));
+  anomalyInsert.run(uuidv4(), devices[3].id, orgId, 'device_silent', 'high',
+    'Device has not reported in 120h (expected every 24h)', null,
+    JSON.stringify({ hoursOverdue: 120 }));
+
+  // --- AI Demo Data: Health Scores ---
+  const healthUpsert = db.prepare(`
+    INSERT INTO device_health (device_id, score, factors, trend, updated_at)
+    VALUES (?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(device_id) DO UPDATE SET
+      score = excluded.score, factors = excluded.factors,
+      trend = excluded.trend, updated_at = excluded.updated_at
+  `);
+  const healthHistory = db.prepare(
+    'INSERT INTO device_health_history (id, device_id, score) VALUES (?, ?, ?)'
+  );
+  const healthData = [
+    { device: devices[0], score: 82, trend: 'stable', factors: { recency: 25, errorRate: 18, logFrequency: 20, firmwareCurrency: 8, anomalyCount: 10 } },
+    { device: devices[1], score: 68, trend: 'degrading', factors: { recency: 25, errorRate: 12, logFrequency: 16, firmwareCurrency: 15, anomalyCount: 0 } },
+    { device: devices[2], score: 91, trend: 'improving', factors: { recency: 25, errorRate: 22, logFrequency: 20, firmwareCurrency: 9, anomalyCount: 15 } },
+    { device: devices[3], score: 35, trend: 'degrading', factors: { recency: 0, errorRate: 25, logFrequency: 0, firmwareCurrency: 0, anomalyCount: 10 } },
+  ];
+  for (const h of healthData) {
+    healthUpsert.run(h.device.id, h.score, JSON.stringify(h.factors), h.trend);
+    healthHistory.run(uuidv4(), h.device.id, h.score);
+  }
+
+  // --- AI Demo Data: Log Summaries (stored in log metadata) ---
+  const allLogs = db.prepare('SELECT id, raw_data, metadata FROM logs WHERE org_id = ?').all(orgId) as any[];
+  const updateMeta = db.prepare('UPDATE logs SET metadata = ? WHERE id = ?');
+  for (const log of allLogs) {
+    const lines = (log.raw_data || '').split('\n').filter((l: string) => l.trim());
+    const errorCount = lines.filter((l: string) => /\b(ERROR|FATAL|CRITICAL|FAIL|exception|timeout)\b/i.test(l)).length;
+    const warnCount = lines.filter((l: string) => /\b(WARN|WARNING)\b/i.test(l)).length;
+    const lineCount = lines.length;
+    const errorRate = lineCount > 0 ? Math.round((errorCount / lineCount) * 1000) / 1000 : 0;
+    const summary = {
+      lineCount, errorCount, warnCount, infoCount: lineCount - errorCount - warnCount,
+      errorRate,
+      topErrors: [] as string[], topWarnings: [] as string[], keywords: [] as string[],
+      oneLiner: `${lineCount} lines${errorCount > 0 ? `, ${errorCount} errors (${(errorRate * 100).toFixed(1)}%)` : ''}${warnCount > 0 ? `, ${warnCount} warnings` : ''}${errorCount === 0 && warnCount === 0 ? '. No errors or warnings detected' : ''}`,
+    };
+    let meta: any = {};
+    try { meta = JSON.parse(log.metadata || '{}'); } catch {}
+    meta.ai_summary = summary;
+    updateMeta.run(JSON.stringify(meta), log.id);
+  }
+
   console.log('Demo data seeded:');
   console.log('  Platform admin: platform-admin/admin123');
   console.log('  Org "Acme Industries" (pro plan):');
@@ -191,6 +253,7 @@ async function seed(): Promise<void> {
   console.log('    Technician: tech1/tech123');
   console.log('    Viewer: viewer1/viewer123');
   console.log('    4 devices, 8 logs, 2 firmware, 2 clusters');
+  console.log('    3 anomalies, 4 health scores, 8 log summaries, 1 webhook');
   console.log('  Org "Beta Corp" (free plan):');
   console.log('    Org admin: beta-admin/beta123');
   db.close();
