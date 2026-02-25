@@ -15,7 +15,6 @@ import { CloudApiService } from '../services/CloudApiService';
 import { SecureStore } from '../services/SecureStore';
 import { NetworkState } from '../types/Network';
 import { COLORS } from '../theme/colors';
-import { initializeSessionKey } from '../utils/crypto';
 
 type ScreenName = 'Dashboard' | 'DeviceList' | 'LogsUpload' | 'FirmwareUpdate' | 'Settings' | 'WiFiSetup';
 
@@ -133,10 +132,8 @@ export const AppNavigator: React.FC = () => {
     firmwareService.setCloudApi(cloudApi);
     firmwareService.setDriveComm(driveComm);
 
-    // Initialize encryption key from Android Keystore and load persisted state
-    initializeSessionKey(secureStore).then(() => {
-      logsService.loadPersistedState();
-    });
+    // Load persisted state (encrypted blobs + upload queue)
+    logsService.loadPersistedState();
 
     // Start monitoring cloud connectivity
     networkService.startCloudMonitoring();

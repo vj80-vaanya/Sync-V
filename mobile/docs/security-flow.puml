@@ -1,0 +1,122 @@
+@startuml SyncV_Security_Flow
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontSize 11
+skinparam sequenceArrowThickness 2
+
+title **Sync-V: E2E Encrypted Log & Firmware Security Flow**\n
+
+participant "Sync-V Drive\n(C++ WiFi AP)" as Drive #LightGreen
+participant "Mobile App\n(React Native)" as Mobile #AliceBlue
+participant "Encrypted\nFile Storage" as FS #Wheat
+participant "Railway Cloud\n(Node.js)" as Cloud #LightCoral
+
+== App Startup ==
+
+Mobile -> FS : loadAllEncryptedLogs()
+FS --> Mobile : Restore opaque blobs\n+ upload queue
+
+== WiFi Connection ==
+
+Mobile -> Drive : WiFi scan (react-native-wifi-reborn)
+Mobile -> Drive : Connect to SyncV-* SSID
+Mobile -> Drive : GET /health (Bearer token)
+Drive --> Mobile : 200 OK
+
+== Log Collection (Drive → Mobile) — E2E Encrypted ==
+
+Mobile -> Drive : GET /files (HTTP + Bearer)
+Drive -> Drive : **AES-256-CBC(logData, PSK)**\nRandom IV prepended
+Drive -> Drive : base64Encode(IV + ciphertext)
+Drive --> Mobile : Opaque base64 blob
+
+group #LightBlue Store Opaque Blob
+  Mobile -> FS : saveEncryptedLog(blob)
+  note right of Mobile
+    Mobile stores base64 blob as-is.
+    **No decryption. No key access.**
+    Only metadata (filename, size, deviceId)
+    is visible to the app.
+  end note
+end
+
+== Log Upload (Mobile → Cloud) — Online ==
+
+Mobile -> Cloud : POST /api/logs\n(HTTPS + JWT Bearer)\n{deviceId, rawData: "<base64 blob>"}
+Cloud -> Cloud : Look up PSK by deviceId\nin device_keys table
+Cloud -> Cloud : base64Decode → split IV + ciphertext
+Cloud -> Cloud : **AES-256-CBC-decrypt(ciphertext, PSK, IV)**
+Cloud -> Cloud : PKCS7 unpad → plaintext
+Cloud -> Cloud : Store plaintext + SHA256 checksum
+Cloud --> Mobile : 201 Created
+
+group #LightGreen Auto-Delete
+  Mobile -> FS : deleteEncryptedLog(filename)
+  Mobile -> Mobile : Remove from memory
+  note right of Mobile
+    Opaque blob permanently
+    deleted after successful
+    cloud transfer.
+  end note
+end
+
+== Log Upload — Offline ==
+
+Mobile -> Cloud : POST /api/logs
+Cloud --> Mobile : **TIMEOUT / ERROR**
+
+group #LightYellow Queue & Persist
+  Mobile -> Mobile : Add to uploadQueue\n(attempts: 0, max: 3)
+  Mobile -> FS : saveUploadQueue(queue)
+  note right of Mobile
+    Opaque blob stays on device.
+    Upload retried when cloud
+    reconnects (max 3 attempts).
+  end note
+end
+
+... Cloud reconnects ...
+
+Mobile -> Cloud : POST /api/logs (retry)
+Cloud --> Mobile : 201 Created
+Mobile -> FS : deleteEncryptedLog(filename)
+
+== Firmware Update (Cloud → Drive via Mobile) ==
+
+Mobile -> Cloud : GET /api/firmware/:id/download\n(HTTPS + JWT)
+Cloud --> Mobile : Firmware data (base64)
+
+group #LightBlue Two-Phase Delivery
+  note right of Mobile
+    Phase 1: Download from cloud, store locally.
+    Phase 2: Send to drive when connected.
+    No encryption/decryption by mobile.
+  end note
+  Mobile -> Drive : POST /firmware/{name}\n(HTTP + Bearer)\nFirmware data
+  Drive --> Mobile : 200 OK
+  Mobile -> Mobile : Delete local firmware copy
+end
+
+== App Close / Restart ==
+
+group #LightYellow Persistence
+  note over Mobile, FS
+    On app close with pending uploads:
+    1. Opaque blobs safe on filesystem
+    2. Upload queue saved to disk
+    3. On restart: blobs restored → queue resumes
+  end note
+end
+
+== What Mobile User CANNOT Do ==
+
+note over Mobile
+  **BLOCKED by design:**
+  - View raw log content (only metadata shown)
+  - Decrypt any log data (no PSK access)
+  - Download logs to device storage
+  - Access any encryption key
+  - Read encrypted blobs (no UI for it)
+end note
+
+@enduml

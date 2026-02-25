@@ -21,9 +21,12 @@ const ProgressBar: React.FC<{ progress: number; color?: string }> = ({ progress,
 const FirmwareCard: React.FC<{
   firmware: FirmwarePackage;
   progress?: FirmwareProgress;
-  onUpdateDrive: () => void;
+  isDownloaded: boolean;
+  isDriveConnected: boolean;
+  onDownload: () => void;
+  onDeliverToDrive: () => void;
   isUpdating: boolean;
-}> = ({ firmware, progress, onUpdateDrive, isUpdating }) => (
+}> = ({ firmware, progress, isDownloaded, isDriveConnected, onDownload, onDeliverToDrive, isUpdating }) => (
   <View style={styles.fwCard}>
     <View style={styles.fwHeader}>
       <View>
@@ -44,7 +47,7 @@ const FirmwareCard: React.FC<{
     {/* Security notice */}
     <View style={styles.securityNotice}>
       <Text style={styles.securityText}>
-        Firmware is encrypted in transit. Not stored on this device.
+        Firmware downloaded from cloud. Delivered to drive as-is.
       </Text>
     </View>
 
@@ -53,7 +56,7 @@ const FirmwareCard: React.FC<{
         <View style={styles.progressHeader}>
           <Text style={styles.progressPhase}>
             {progress.phase === 'downloading' ? 'Downloading from cloud...' :
-             progress.phase === 'transferring' ? 'Transferring to drive (encrypted)...' :
+             progress.phase === 'transferring' ? 'Sending to drive...' :
              progress.phase === 'verifying' ? 'Verifying integrity...' :
              progress.phase === 'complete' ? 'Complete — firmware delivered' :
              progress.phase === 'failed' ? 'Failed' : progress.phase}
@@ -69,15 +72,27 @@ const FirmwareCard: React.FC<{
     )}
 
     <View style={styles.fwActions}>
-      {(!progress || progress.phase === 'failed') && (
+      {(!progress || progress.phase === 'failed') && !isDownloaded && (
         <TouchableOpacity
-          style={[styles.updateButton, isUpdating && styles.updateButtonDisabled]}
-          onPress={onUpdateDrive}
+          style={[styles.downloadButton, isUpdating && styles.updateButtonDisabled]}
+          onPress={onDownload}
           disabled={isUpdating}
           activeOpacity={0.7}
         >
+          <Text style={styles.downloadButtonText}>
+            {isUpdating ? 'Downloading...' : 'Download'}
+          </Text>
+        </TouchableOpacity>
+      )}
+      {isDownloaded && (!progress || progress.phase === 'failed') && (
+        <TouchableOpacity
+          style={[styles.updateButton, (!isDriveConnected || isUpdating) && styles.updateButtonDisabled]}
+          onPress={onDeliverToDrive}
+          disabled={!isDriveConnected || isUpdating}
+          activeOpacity={0.7}
+        >
           <Text style={styles.updateButtonText}>
-            {isUpdating ? 'Updating...' : 'Update Drive'}
+            {isUpdating ? 'Sending...' : isDriveConnected ? 'Send to Drive' : 'Drive Offline'}
           </Text>
         </TouchableOpacity>
       )}
@@ -95,6 +110,7 @@ export const FirmwareUpdateScreen: React.FC<FirmwareUpdateProps> = ({ firmwareSe
   const [refreshing, setRefreshing] = useState(false);
   const [progressMap, setProgressMap] = useState<Record<string, FirmwareProgress>>({});
   const [updatingIds, setUpdatingIds] = useState<Set<string>>(new Set());
+  const [downloadedIds, setDownloadedIds] = useState<Set<string>>(new Set());
   const [networkState, setNetworkState] = useState<NetworkState>(networkService.getNetworkState());
 
   useEffect(() => {
@@ -106,18 +122,55 @@ export const FirmwareUpdateScreen: React.FC<FirmwareUpdateProps> = ({ firmwareSe
     try {
       const updates = await firmwareService.checkForUpdates('typeA', '1.0.0');
       setAvailable(updates);
+      // Sync downloaded state
+      const newDownloaded = new Set<string>();
+      for (const fw of updates) {
+        if (firmwareService.isDownloaded(fw.id)) {
+          newDownloaded.add(fw.id);
+        }
+      }
+      setDownloadedIds(newDownloaded);
     } catch {
       // Handle error
     }
     setRefreshing(false);
   };
 
-  const handleUpdateDrive = async (fw: FirmwarePackage) => {
+  const handleDownload = async (fw: FirmwarePackage) => {
     setUpdatingIds((prev) => new Set(prev).add(fw.id));
     firmwareService.onProgress((p) => {
       setProgressMap((prev) => ({ ...prev, [fw.id]: { ...p } }));
     });
-    await firmwareService.downloadAndTransfer(fw);
+    const result = await firmwareService.downloadFirmware(fw);
+    if (result.success) {
+      setDownloadedIds((prev) => new Set(prev).add(fw.id));
+      // Clear download progress to show "Send to Drive" button
+      setProgressMap((prev) => {
+        const next = { ...prev };
+        delete next[fw.id];
+        return next;
+      });
+    }
+    setUpdatingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(fw.id);
+      return next;
+    });
+  };
+
+  const handleDeliverToDrive = async (fw: FirmwarePackage) => {
+    setUpdatingIds((prev) => new Set(prev).add(fw.id));
+    firmwareService.onProgress((p) => {
+      setProgressMap((prev) => ({ ...prev, [fw.id]: { ...p } }));
+    });
+    const result = await firmwareService.deliverToDrive(fw);
+    if (result.success) {
+      setDownloadedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(fw.id);
+        return next;
+      });
+    }
     setUpdatingIds((prev) => {
       const next = new Set(prev);
       next.delete(fw.id);
@@ -144,10 +197,10 @@ export const FirmwareUpdateScreen: React.FC<FirmwareUpdateProps> = ({ firmwareSe
         </Text>
       </View>
 
-      {/* Encryption Info Banner */}
+      {/* Info Banner */}
       <View style={styles.encryptionBanner}>
         <Text style={styles.encryptionBannerText}>
-          Firmware is encrypted during transfer and never stored on this device.
+          Download firmware from cloud, then send to drive when connected.
         </Text>
       </View>
 
@@ -169,7 +222,10 @@ export const FirmwareUpdateScreen: React.FC<FirmwareUpdateProps> = ({ firmwareSe
             <FirmwareCard
               firmware={item}
               progress={progressMap[item.id]}
-              onUpdateDrive={() => handleUpdateDrive(item)}
+              isDownloaded={downloadedIds.has(item.id)}
+              isDriveConnected={networkState.isDriveReachable}
+              onDownload={() => handleDownload(item)}
+              onDeliverToDrive={() => handleDeliverToDrive(item)}
               isUpdating={updatingIds.has(item.id)}
             />
           )}
@@ -246,6 +302,10 @@ const styles = StyleSheet.create({
   progressFill: { height: '100%', borderRadius: 3 },
   errorText: { fontSize: 12, color: '#ef4444', marginTop: 4 },
   fwActions: { flexDirection: 'row', gap: 8 },
+  downloadButton: {
+    flex: 1, paddingVertical: 12, backgroundColor: '#3b82f6', borderRadius: 8, alignItems: 'center',
+  },
+  downloadButtonText: { color: '#ffffff', fontSize: 14, fontWeight: '600' },
   updateButton: {
     flex: 1, paddingVertical: 12, backgroundColor: '#6366f1', borderRadius: 8, alignItems: 'center',
   },

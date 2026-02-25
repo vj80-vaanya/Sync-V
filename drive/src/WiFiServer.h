@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <memory>
+#include "EncryptedStorage.h"
 
 namespace syncv {
 
@@ -37,6 +39,12 @@ public:
     /// Set the expected authentication token.
     void setAuthToken(const std::string& token);
 
+    /// Set the encryption key (hex string). Enables encryption of served files.
+    void setEncryptionKey(const std::string& hexKey);
+
+    /// Check if encryption is enabled.
+    bool isEncryptionEnabled() const;
+
     /// Set connection timeout in milliseconds.
     void setTimeoutMs(int ms);
 
@@ -47,9 +55,11 @@ private:
     std::string rootDir_;
     std::string authToken_;
     int timeoutMs_ = 30000;
+    std::unique_ptr<EncryptedStorage> encryptor_;
 
     bool isPathSafe(const std::string& filename) const;
     bool constantTimeCompare(const std::string& a, const std::string& b) const;
+    static std::string base64Encode(const std::string& data);
 };
 
 } // namespace syncv

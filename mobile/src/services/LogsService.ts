@@ -2,7 +2,7 @@ import { LogFile, LogUploadStatus, EncryptedLogEntry, UploadQueueItem } from '..
 import { CloudApiService } from './CloudApiService';
 import { SecureStore } from './SecureStore';
 import { CLOUD_CONFIG } from '../config';
-import { encrypt, decrypt } from '../utils/crypto';
+import { createHash } from '../utils/hash';
 
 interface UploadResult {
   success: boolean;
@@ -25,11 +25,17 @@ export class LogsService {
   private secureStore: SecureStore | null = null;
 
   /**
-   * Encrypted storage — log content is encrypted immediately upon receipt.
-   * Only metadata is accessible; raw content is never exposed to the UI.
+   * Opaque encrypted blob storage — drive-encrypted data stored as-is.
+   * Mobile never decrypts; only metadata is accessible to the UI.
    * Persisted to filesystem so data survives app restarts.
    */
   private encryptedStore: Map<string, EncryptedLogEntry> = new Map();
+
+  /**
+   * Mock drive data — in real mode, getLogsFromDrive() calls driveComm.getFileContent()
+   * which returns already-encrypted base64 from the drive.
+   */
+  private mockDriveEncryptedData: Map<string, string> = new Map();
 
   setCloudApi(api: CloudApiService): void {
     this.cloudApi = api;
@@ -45,6 +51,11 @@ export class LogsService {
 
   setMockCloudAvailable(available: boolean): void {
     this.mockCloudAvailable = available;
+  }
+
+  /** Set mock encrypted data for a log file (simulates drive-encrypted content) */
+  setMockDriveEncryptedData(filename: string, base64Blob: string): void {
+    this.mockDriveEncryptedData.set(filename, base64Blob);
   }
 
   /**
@@ -69,19 +80,21 @@ export class LogsService {
   }
 
   /**
-   * Fetch logs from drive. Content is encrypted immediately and persisted.
-   * Returns only metadata — raw content is never returned.
+   * Fetch logs from drive. Content arrives already encrypted (opaque base64 blob).
+   * Stored as-is — mobile never decrypts.
    */
   async getLogsFromDrive(): Promise<LogFile[]> {
     const driveLogs = [...this.mockDriveLogs];
 
-    // Encrypt each log's data immediately upon receipt
+    // Store each log's encrypted blob as-is upon receipt
     for (const log of driveLogs) {
       if (!this.encryptedStore.has(log.filename)) {
-        const rawData = `[${log.collectedAt}] Log data from ${log.deviceId} — ${log.filename} (${log.size} bytes)`;
+        // In mock mode, generate a placeholder blob; in real mode, driveComm provides this
+        const driveBlob = this.mockDriveEncryptedData.get(log.filename)
+          || `[${log.collectedAt}] Log data from ${log.deviceId} — ${log.filename} (${log.size} bytes)`;
         const entry: EncryptedLogEntry = {
           metadata: log,
-          encryptedData: encrypt(rawData),
+          encryptedData: driveBlob,
           encryptedAt: new Date().toISOString(),
         };
         this.encryptedStore.set(log.filename, entry);
@@ -113,27 +126,24 @@ export class LogsService {
   }
 
   /**
-   * Upload an encrypted log to cloud.
-   * Decrypts in-memory only for the upload request, then auto-deletes.
+   * Upload an opaque encrypted blob to cloud.
+   * Mobile sends the blob as-is — cloud decrypts using the device's PSK.
    */
   async uploadToCloud(logFile: LogFile): Promise<UploadResult> {
     // Try real cloud API if available and authenticated
     if (this.cloudApi && this.cloudApi.isAuthenticated()) {
       this.logStatuses.set(logFile.filename, 'uploading');
 
-      // Decrypt from encrypted store for upload
+      // Get opaque blob from store
       const entry = this.encryptedStore.get(logFile.filename);
-      let rawData = `[${logFile.collectedAt}] Log data from ${logFile.deviceId}`;
-      if (entry) {
-        const decrypted = decrypt(entry.encryptedData);
-        if (decrypted) rawData = decrypted;
-      }
+      const rawData = entry?.encryptedData
+        || `[${logFile.collectedAt}] Log data from ${logFile.deviceId}`;
 
       const result = await this.cloudApi.post(CLOUD_CONFIG.logsPath, {
         deviceId: logFile.deviceId,
         filename: logFile.filename,
         size: logFile.size,
-        checksum: this.simpleChecksum(logFile.filename + logFile.size),
+        checksum: createHash(rawData),
         rawData,
         vendor: 'syncv-mobile',
         format: 'text',
@@ -191,19 +201,15 @@ export class LogsService {
       let uploaded = false;
 
       if (useRealApi) {
-        // Decrypt for upload
         const entry = this.encryptedStore.get(item.logFile.filename);
-        let rawData = `[${item.logFile.collectedAt}] Log data from ${item.logFile.deviceId}`;
-        if (entry) {
-          const decrypted = decrypt(entry.encryptedData);
-          if (decrypted) rawData = decrypted;
-        }
+        const rawData = entry?.encryptedData
+          || `[${item.logFile.collectedAt}] Log data from ${item.logFile.deviceId}`;
 
         const result = await this.cloudApi!.post(CLOUD_CONFIG.logsPath, {
           deviceId: item.logFile.deviceId,
           filename: item.logFile.filename,
           size: item.logFile.size,
-          checksum: this.simpleChecksum(item.logFile.filename + item.logFile.size),
+          checksum: createHash(rawData),
           rawData,
           vendor: 'syncv-mobile',
           format: 'text',
@@ -243,12 +249,12 @@ export class LogsService {
     return this.logStatuses.get(filename);
   }
 
-  /** Check if a log is currently encrypted on-device */
+  /** Check if a log blob is stored on-device */
   isEncryptedOnDevice(filename: string): boolean {
     return this.encryptedStore.has(filename);
   }
 
-  /** Get count of encrypted logs stored on-device */
+  /** Get count of encrypted blobs stored on-device */
   getEncryptedCount(): number {
     return this.encryptedStore.size;
   }
@@ -282,18 +288,5 @@ export class LogsService {
     if (this.secureStore) {
       await this.secureStore.saveUploadQueue(this.uploadQueue);
     }
-  }
-
-  // Generate a deterministic checksum for log uploads
-  private simpleChecksum(input: string): string {
-    let hash = 0;
-    for (let i = 0; i < input.length; i++) {
-      const char = input.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32-bit integer
-    }
-    const hex = Math.abs(hash).toString(16).padStart(8, '0');
-    // Pad to 64 chars for SHA256 format
-    return (hex + hex + hex + hex + hex + hex + hex + hex).substring(0, 64);
   }
 }

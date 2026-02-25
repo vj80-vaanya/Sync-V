@@ -1,7 +1,7 @@
 import { SecureStore } from '../src/services/SecureStore';
 import { LogsService } from '../src/services/LogsService';
 import { LogFile, EncryptedLogEntry } from '../src/types/Log';
-import { encrypt, resetSessionKey, setSessionKey, initializeSessionKey } from '../src/utils/crypto';
+import { resetSessionKey, setSessionKey, initializeSessionKey } from '../src/utils/crypto';
 
 describe('SecureStore', () => {
   let store: SecureStore;
@@ -33,7 +33,7 @@ describe('SecureStore', () => {
   test('saves and loads encrypted log entry', async () => {
     const entry: EncryptedLogEntry = {
       metadata: { filename: 'sensor.csv', size: 1024, deviceId: 'DEV001', collectedAt: '2026-01-01' },
-      encryptedData: encrypt('raw log data'),
+      encryptedData: 'opaque-base64-blob-from-drive',
       encryptedAt: new Date().toISOString(),
     };
 
@@ -46,12 +46,12 @@ describe('SecureStore', () => {
   test('loads multiple encrypted logs', async () => {
     const entry1: EncryptedLogEntry = {
       metadata: { filename: 'log1.csv', size: 100, deviceId: 'DEV001', collectedAt: '2026-01-01' },
-      encryptedData: encrypt('data1'),
+      encryptedData: 'blob1-from-drive',
       encryptedAt: new Date().toISOString(),
     };
     const entry2: EncryptedLogEntry = {
       metadata: { filename: 'log2.csv', size: 200, deviceId: 'DEV002', collectedAt: '2026-01-02' },
-      encryptedData: encrypt('data2'),
+      encryptedData: 'blob2-from-drive',
       encryptedAt: new Date().toISOString(),
     };
 
@@ -65,7 +65,7 @@ describe('SecureStore', () => {
   test('deletes encrypted log', async () => {
     const entry: EncryptedLogEntry = {
       metadata: { filename: 'todelete.csv', size: 50, deviceId: 'DEV001', collectedAt: '2026-01-01' },
-      encryptedData: encrypt('delete me'),
+      encryptedData: 'blob-to-delete',
       encryptedAt: new Date().toISOString(),
     };
 

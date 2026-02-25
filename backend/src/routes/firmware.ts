@@ -85,6 +85,17 @@ export function createFirmwareRoutes(firmwareDistribution: FirmwareDistributionS
     res.json({ success: true });
   });
 
+  // GET /api/firmware/:id/download — download firmware content
+  router.get('/:id/download', (req: Request, res: Response) => {
+    const firmware = firmwareDistribution.getFirmware(req.params.id);
+    if (!firmware) {
+      return res.status(404).json({ error: 'Firmware package not found' });
+    }
+    // Placeholder: return mock firmware data as base64
+    const mockData = Buffer.from(`FIRMWARE_${firmware.filename}_v${firmware.version}`).toString('base64');
+    res.json({ data: mockData });
+  });
+
   // GET /api/firmware/:id — get firmware by ID (must be after all static paths)
   router.get('/:id', (req: Request, res: Response) => {
     const firmware = firmwareDistribution.getFirmware(req.params.id);

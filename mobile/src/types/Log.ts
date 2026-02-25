@@ -1,5 +1,3 @@
-import { EncryptedBlob } from '../utils/crypto';
-
 export interface LogFile {
   filename: string;
   size: number;
@@ -25,9 +23,10 @@ export interface UploadQueueItem {
   maxAttempts: number;
 }
 
-/** An encrypted log entry stored on-device. Content is never exposed to the UI. */
+/** An encrypted log entry stored on-device. Content is an opaque base64 blob from the drive. */
 export interface EncryptedLogEntry {
   metadata: LogFile;
-  encryptedData: EncryptedBlob;
+  /** Opaque base64-encoded blob from drive (IV + AES-256-CBC ciphertext) */
+  encryptedData: string;
   encryptedAt: string;
 }

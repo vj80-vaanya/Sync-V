@@ -3,7 +3,6 @@ import { CloudApiService } from './CloudApiService';
 import { DriveCommService } from './DriveCommService';
 import { CLOUD_CONFIG } from '../config';
 import { createHash } from '../utils/hash';
-import { encrypt, decrypt, EncryptedBlob } from '../utils/crypto';
 
 interface TransferResult {
   success: boolean;
@@ -21,10 +20,10 @@ export class FirmwareService {
   private driveComm: DriveCommService | null = null;
 
   /**
-   * Encrypted firmware cache — firmware is encrypted in memory and never
-   * stored as plaintext. Auto-deleted after transfer to drive.
+   * Downloaded firmware cache — firmware data stored as-is from cloud.
+   * Two-phase: download from cloud, then deliver to drive as separate action.
    */
-  private encryptedFirmware: Map<string, EncryptedBlob> = new Map();
+  private downloadedFirmware: Map<string, { data: string; pkg: FirmwarePackage }> = new Map();
 
   setCloudApi(api: CloudApiService): void {
     this.cloudApi = api;
@@ -78,11 +77,20 @@ export class FirmwareService {
     );
   }
 
+  /** Check if firmware has been downloaded and is ready to deliver */
+  isDownloaded(pkgId: string): boolean {
+    return this.downloadedFirmware.has(pkgId);
+  }
+
+  /** Get all downloaded firmware packages */
+  getDownloadedFirmware(): FirmwarePackage[] {
+    return Array.from(this.downloadedFirmware.values()).map(e => e.pkg);
+  }
+
   /**
-   * Download firmware from cloud, encrypt in memory, then transfer directly to drive.
-   * Firmware is never stored unencrypted and is auto-deleted after transfer.
+   * Download firmware from cloud. Stores locally for later delivery to drive.
    */
-  async downloadAndTransfer(pkg: FirmwarePackage): Promise<TransferResult> {
+  async downloadFirmware(pkg: FirmwarePackage): Promise<{ success: boolean; error?: string }> {
     if (this.mockDownloadShouldFail) {
       this.emitProgress({
         phase: 'failed',
@@ -94,7 +102,7 @@ export class FirmwareService {
       return { success: false, error: 'Download failed' };
     }
 
-    // Phase 1: Download (simulate download progress)
+    // Phase 1: Download
     this.emitProgress({
       phase: 'downloading',
       percentage: 30,
@@ -102,7 +110,7 @@ export class FirmwareService {
       bytesTotal: pkg.size,
     });
 
-    // Simulate firmware data (in real mode, this comes from cloud API)
+    // Simulate firmware data (in real mode, this comes from cloud API download endpoint)
     const firmwareData = `FIRMWARE_${pkg.filename}_v${pkg.version}_${pkg.size}`;
 
     this.emitProgress({
@@ -112,11 +120,22 @@ export class FirmwareService {
       bytesTotal: pkg.size,
     });
 
-    // Phase 2: Encrypt in memory (never stored as plaintext)
-    const encryptedBlob = encrypt(firmwareData);
-    this.encryptedFirmware.set(pkg.id, encryptedBlob);
+    // Store for later delivery
+    this.downloadedFirmware.set(pkg.id, { data: firmwareData, pkg });
 
-    // Phase 3: Transfer to drive
+    return { success: true };
+  }
+
+  /**
+   * Deliver previously downloaded firmware to the drive.
+   * Deletes from local storage on success.
+   */
+  async deliverToDrive(pkg: FirmwarePackage): Promise<TransferResult> {
+    const cached = this.downloadedFirmware.get(pkg.id);
+    if (!cached) {
+      return { success: false, error: 'Firmware not downloaded' };
+    }
+
     this.emitProgress({
       phase: 'transferring',
       percentage: 30,
@@ -128,11 +147,7 @@ export class FirmwareService {
 
     if (this.driveComm && this.driveComm.isConnected()) {
       try {
-        // Decrypt only for the transfer, send to drive
-        const decrypted = decrypt(encryptedBlob);
-        if (decrypted) {
-          transferSuccess = await this.driveComm.sendFirmware(pkg.filename, decrypted);
-        }
+        transferSuccess = await this.driveComm.sendFirmware(pkg.filename, cached.data);
       } catch {
         transferSuccess = false;
       }
@@ -140,10 +155,10 @@ export class FirmwareService {
       transferSuccess = this.mockDriveConnected;
     }
 
-    // Auto-delete encrypted firmware after transfer attempt
-    this.encryptedFirmware.delete(pkg.id);
-
     if (transferSuccess) {
+      // Delete from local storage on success
+      this.downloadedFirmware.delete(pkg.id);
+
       this.emitProgress({
         phase: 'transferring',
         percentage: 100,
@@ -151,7 +166,6 @@ export class FirmwareService {
         bytesTotal: pkg.size,
       });
 
-      // Phase 4: Verify
       this.emitProgress({
         phase: 'verifying',
         percentage: 100,
@@ -180,11 +194,15 @@ export class FirmwareService {
   }
 
   /**
-   * @deprecated Use downloadAndTransfer() instead. Firmware should not be
-   * stored locally — it flows directly from cloud to drive.
+   * Download from cloud and deliver to drive in one step.
+   * Convenience method that calls downloadFirmware() then deliverToDrive().
    */
-  async downloadFirmware(pkg: FirmwarePackage): Promise<{ success: boolean; error?: string }> {
-    return this.downloadAndTransfer(pkg);
+  async downloadAndTransfer(pkg: FirmwarePackage): Promise<TransferResult> {
+    const downloadResult = await this.downloadFirmware(pkg);
+    if (!downloadResult.success) {
+      return { success: false, error: downloadResult.error };
+    }
+    return this.deliverToDrive(pkg);
   }
 
   /**

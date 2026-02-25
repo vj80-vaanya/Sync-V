@@ -1,0 +1,119 @@
+@startuml SyncV_System_Architecture
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontSize 11
+skinparam packageStyle rectangle
+skinparam componentStyle rectangle
+
+title **Sync-V System Architecture — E2E Encryption**\n
+
+' ============================================================
+' ACTORS
+' ============================================================
+actor "Field Tech\n(Mobile User)" as User #LightBlue
+entity "Sync-V Drive\n(C++ WiFi AP)" as Drive #LightGreen
+cloud "Railway Cloud\n(Node.js + SQLite)" as Cloud #LightCoral
+actor "Admin\n(Web Dashboard)" as Admin #Wheat
+
+' ============================================================
+' DRIVE CRYPTO
+' ============================================================
+package "Drive Encryption" as DriveCrypto #LightGreen {
+  [AES-256-CBC\nEncryption] as DriveAES
+  [Per-Device PSK\n(Pre-Configured)] as DrivePSK
+}
+
+' ============================================================
+' MOBILE APP PACKAGE
+' ============================================================
+package "Mobile App (React Native / Expo)" as MobileApp #AliceBlue {
+
+  package "UI Screens" as Screens {
+    [Dashboard] as Dash
+    [WiFi Setup] as WiFi
+    [Log Upload] as LogUI
+    [Firmware Update] as FwUI
+    [Device List] as DevUI
+    [Settings] as SetUI
+  }
+
+  package "Service Layer" as Services {
+    [WiFiService] as WiFiSvc
+    [DriveCommService] as DriveSvc
+    [LogsService\n(Opaque Blob Router)] as LogSvc
+    [FirmwareService\n(Two-Phase Delivery)] as FwSvc
+    [NetworkService] as NetSvc
+    [CloudApiService] as CloudSvc
+    [SecureStore] as SecStore
+  }
+
+  package "Storage Layer" as Storage {
+    [hash.ts\nSHA256 Hashing] as Hash
+    [Opaque Blob Storage\n(expo-file-system)] as BlobFS
+  }
+}
+
+' ============================================================
+' CLOUD CRYPTO
+' ============================================================
+package "Cloud Decryption" as CloudCrypto #LightCoral {
+  [AES-256-CBC\nDecryption] as CloudAES
+  [device_keys Table\n(PSK per Device)] as CloudKeys
+}
+
+' ============================================================
+' CONNECTIONS: User ↔ Mobile
+' ============================================================
+User --> Dash : Opens app
+User --> WiFi : Scan & connect
+User --> LogUI : View metadata only\n(no content access)
+User --> FwUI : Download + Send\n(two buttons)
+User --> SetUI : Cloud login
+
+' ============================================================
+' CONNECTIONS: Screens ↔ Services
+' ============================================================
+WiFi --> WiFiSvc
+WiFi --> DriveSvc
+WiFi --> NetSvc
+LogUI --> LogSvc
+LogUI --> NetSvc
+FwUI --> FwSvc
+Dash --> DriveSvc
+Dash --> LogSvc
+Dash --> NetSvc
+SetUI --> CloudSvc
+SetUI --> DriveSvc
+
+' ============================================================
+' CONNECTIONS: Services ↔ Storage
+' ============================================================
+LogSvc --> SecStore : Persist opaque blobs
+LogSvc --> Hash : Checksum for upload
+SecStore --> BlobFS : Opaque log blobs\n+ upload queue
+
+' ============================================================
+' CONNECTIONS: Drive ↔ Mobile ↔ Cloud (E2E Flow)
+' ============================================================
+Drive --> DriveAES : Encrypt logs
+DrivePSK --> DriveAES : PSK
+DriveAES --> DriveSvc : base64(IV + ciphertext)
+
+WiFiSvc --> Drive : WiFi scan\n+ connect
+DriveSvc --> Drive : **HTTP** :8080\nBearer token auth
+LogSvc --> CloudSvc : Forward opaque blob\n(no decryption)
+FwSvc --> CloudSvc : Download firmware
+FwSvc --> DriveSvc : Send firmware to drive
+NetSvc --> DriveSvc : Ping /health
+NetSvc --> CloudSvc : Ping /health
+CloudSvc --> Cloud : **HTTPS**\nJWT Bearer token
+
+Cloud --> CloudAES : Decrypt logs
+CloudKeys --> CloudAES : PSK lookup by deviceId
+
+' ============================================================
+' CONNECTIONS: Cloud ↔ Admin
+' ============================================================
+Cloud --> Admin : Web dashboard\n(view logs, firmware, devices)
+
+@enduml

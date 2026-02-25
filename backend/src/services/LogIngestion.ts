@@ -1,4 +1,7 @@
 import { LogModel, LogRecord, LogInput, LogSummary } from '../models/Log';
+import { DeviceKeyModel } from '../models/DeviceKey';
+import { decryptAes256Cbc, isEncryptedPayload } from '../utils/encryption';
+import { sha256 } from '../utils/hash';
 import { v4 as uuidv4 } from 'uuid';
 import { isValidSha256, isValidFilename, isValidVendor, isValidLogFormat } from '../utils/validation';
 
@@ -10,9 +13,11 @@ export interface IngestionResult {
 
 export class LogIngestionService {
   private model: LogModel;
+  private deviceKeyModel: DeviceKeyModel | null;
 
-  constructor(model: LogModel) {
+  constructor(model: LogModel, deviceKeyModel?: DeviceKeyModel) {
     this.model = model;
+    this.deviceKeyModel = deviceKeyModel || null;
   }
 
   ingest(input: {
@@ -56,6 +61,31 @@ export class LogIngestionService {
       return { success: false, error: 'Duplicate log (checksum already exists)' };
     }
 
+    // Attempt E2E decryption if device has a PSK and payload looks encrypted
+    let storedData = input.rawData || '';
+    let storedChecksum = input.checksum;
+
+    if (this.deviceKeyModel && input.rawData) {
+      const psk = this.deviceKeyModel.getPsk(input.deviceId);
+      if (psk && isEncryptedPayload(input.rawData)) {
+        try {
+          const plaintext = decryptAes256Cbc(input.rawData, psk);
+          storedData = plaintext;
+          storedChecksum = sha256(plaintext);
+
+          // Re-check duplicate with plaintext checksum
+          const existingPlain = this.model.getByChecksum(storedChecksum);
+          if (existingPlain) {
+            return { success: false, error: 'Duplicate log (checksum already exists)' };
+          }
+        } catch {
+          // Decryption failed — store as-is (backwards-compatible)
+          storedData = input.rawData;
+          storedChecksum = input.checksum;
+        }
+      }
+    }
+
     const logId = uuidv4();
     const rawPath = `logs/${input.deviceId}/${logId}_${input.filename}`;
 
@@ -64,9 +94,9 @@ export class LogIngestionService {
       device_id: input.deviceId,
       filename: input.filename,
       size: input.size,
-      checksum: input.checksum,
+      checksum: storedChecksum,
       raw_path: rawPath,
-      raw_data: input.rawData || '',
+      raw_data: storedData,
       vendor: input.vendor || 'unknown',
       format: input.format || 'text',
       metadata: input.metadata,

@@ -6,6 +6,7 @@ import { DeviceModel } from './models/Device';
 import { LogModel } from './models/Log';
 import { FirmwareModel } from './models/Firmware';
 import { UserModel } from './models/User';
+import { DeviceKeyModel } from './models/DeviceKey';
 import { DeviceRegistry } from './services/DeviceRegistry';
 import { LogIngestionService } from './services/LogIngestion';
 import { FirmwareDistributionService } from './services/FirmwareDistribution';
@@ -32,10 +33,11 @@ export function createApp(dbPath?: string): { app: express.Express; db: Database
   const logModel = new LogModel(db);
   const firmwareModel = new FirmwareModel(db);
   const userModel = new UserModel(db);
+  const deviceKeyModel = new DeviceKeyModel(db);
 
   // Initialize services
   const deviceRegistry = new DeviceRegistry(deviceModel);
-  const logIngestion = new LogIngestionService(logModel);
+  const logIngestion = new LogIngestionService(logModel, deviceKeyModel);
   const firmwareDistribution = new FirmwareDistributionService(firmwareModel);
   const dashboardService = new DashboardService(deviceModel, logModel, firmwareModel);
   const authService = new AuthService(JWT_SECRET);
@@ -57,7 +59,7 @@ export function createApp(dbPath?: string): { app: express.Express; db: Database
   app.use('/api/auth', createAuthRoutes(authService, userModel));
 
   // Protected routes
-  app.use('/api/devices', requireAuth('viewer'), createDeviceRoutes(deviceRegistry));
+  app.use('/api/devices', requireAuth('viewer'), createDeviceRoutes(deviceRegistry, deviceKeyModel));
   app.use('/api/logs', requireAuth('viewer'), createLogRoutes(logIngestion));
   app.use('/api/firmware', requireAuth('viewer'), createFirmwareRoutes(firmwareDistribution));
   app.use('/api/dashboard', requireAuth('viewer'), createDashboardRoutes(dashboardService));

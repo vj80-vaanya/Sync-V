@@ -88,7 +88,16 @@ FileResult WiFiServer::getFileContent(const std::string& filename) {
 
     std::ostringstream ss;
     ss << file.rdbuf();
-    result.data = ss.str();
+    std::string rawData = ss.str();
+
+    // If encryption is enabled, encrypt and base64-encode
+    if (encryptor_) {
+        std::string ciphertext = encryptor_->encrypt(rawData);
+        result.data = base64Encode(ciphertext);
+    } else {
+        result.data = rawData;
+    }
+
     result.success = true;
     return result;
 }
@@ -134,12 +143,49 @@ void WiFiServer::setAuthToken(const std::string& token) {
     authToken_ = token;
 }
 
+void WiFiServer::setEncryptionKey(const std::string& hexKey) {
+    // Convert hex key to raw bytes string
+    std::string rawKey;
+    rawKey.reserve(hexKey.size() / 2);
+    for (size_t i = 0; i + 1 < hexKey.size(); i += 2) {
+        unsigned int byte;
+        std::sscanf(hexKey.c_str() + i, "%02x", &byte);
+        rawKey.push_back(static_cast<char>(byte));
+    }
+    encryptor_ = std::make_unique<EncryptedStorage>(rawKey);
+}
+
+bool WiFiServer::isEncryptionEnabled() const {
+    return encryptor_ != nullptr;
+}
+
 void WiFiServer::setTimeoutMs(int ms) {
     timeoutMs_ = ms;
 }
 
 int WiFiServer::getTimeoutMs() const {
     return timeoutMs_;
+}
+
+std::string WiFiServer::base64Encode(const std::string& data) {
+    static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string encoded;
+    const auto* bytes = reinterpret_cast<const unsigned char*>(data.data());
+    size_t len = data.size();
+    encoded.reserve(((len + 2) / 3) * 4);
+
+    for (size_t i = 0; i < len; i += 3) {
+        uint32_t n = static_cast<uint32_t>(bytes[i]) << 16;
+        if (i + 1 < len) n |= static_cast<uint32_t>(bytes[i + 1]) << 8;
+        if (i + 2 < len) n |= static_cast<uint32_t>(bytes[i + 2]);
+
+        encoded.push_back(table[(n >> 18) & 0x3F]);
+        encoded.push_back(table[(n >> 12) & 0x3F]);
+        encoded.push_back((i + 1 < len) ? table[(n >> 6) & 0x3F] : '=');
+        encoded.push_back((i + 2 < len) ? table[n & 0x3F] : '=');
+    }
+
+    return encoded;
 }
 
 } // namespace syncv

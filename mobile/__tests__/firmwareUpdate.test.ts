@@ -63,11 +63,59 @@ describe('FirmwareService', () => {
     expect(lastUpdate.phase).toBe('failed');
   });
 
-  test('deprecated downloadFirmware calls downloadAndTransfer', async () => {
-    firmwareService.setMockDriveConnected(true);
+  // Two-phase download/deliver tests
 
+  test('downloadFirmware stores firmware locally', async () => {
     const result = await firmwareService.downloadFirmware(mockPackage);
     expect(result.success).toBe(true);
+    expect(firmwareService.isDownloaded(mockPackage.id)).toBe(true);
+  });
+
+  test('deliverToDrive sends to drive and deletes local copy', async () => {
+    firmwareService.setMockDriveConnected(true);
+
+    await firmwareService.downloadFirmware(mockPackage);
+    expect(firmwareService.isDownloaded(mockPackage.id)).toBe(true);
+
+    const result = await firmwareService.deliverToDrive(mockPackage);
+    expect(result.success).toBe(true);
+    expect(firmwareService.isDownloaded(mockPackage.id)).toBe(false);
+  });
+
+  test('deliverToDrive fails when not downloaded', async () => {
+    firmwareService.setMockDriveConnected(true);
+
+    const result = await firmwareService.deliverToDrive(mockPackage);
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Firmware not downloaded');
+  });
+
+  test('deliverToDrive fails when drive disconnected', async () => {
+    firmwareService.setMockDriveConnected(false);
+
+    await firmwareService.downloadFirmware(mockPackage);
+    const result = await firmwareService.deliverToDrive(mockPackage);
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Transfer to drive failed');
+  });
+
+  test('deliverToDrive keeps local copy on failure', async () => {
+    firmwareService.setMockDriveConnected(false);
+
+    await firmwareService.downloadFirmware(mockPackage);
+    await firmwareService.deliverToDrive(mockPackage);
+    // Should still be downloaded since transfer failed
+    expect(firmwareService.isDownloaded(mockPackage.id)).toBe(true);
+  });
+
+  test('getDownloadedFirmware returns all downloaded packages', async () => {
+    const pkg2: FirmwarePackage = { ...mockPackage, id: 'fw-002', version: '3.0.0' };
+
+    await firmwareService.downloadFirmware(mockPackage);
+    await firmwareService.downloadFirmware(pkg2);
+
+    const downloaded = firmwareService.getDownloadedFirmware();
+    expect(downloaded).toHaveLength(2);
   });
 
   test('deprecated transferToDrive works with mock', async () => {

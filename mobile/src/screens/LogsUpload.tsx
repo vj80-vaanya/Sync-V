@@ -47,7 +47,7 @@ const LogItem: React.FC<{
       <View style={styles.badges}>
         {isEncrypted && (
           <View style={styles.encryptedBadge}>
-            <Text style={styles.encryptedText}>Encrypted</Text>
+            <Text style={styles.encryptedText}>E2E Encrypted</Text>
           </View>
         )}
         {status && (
@@ -66,7 +66,7 @@ const LogItem: React.FC<{
         {status === 'uploaded'
           ? 'Transferred to cloud. Local data deleted.'
           : isEncrypted
-          ? 'Content encrypted. Will be deleted after cloud transfer.'
+          ? 'Encrypted by drive. Decrypted only on cloud.'
           : 'Metadata only — content not stored on device.'}
       </Text>
     </View>
@@ -170,7 +170,7 @@ export const LogsUploadScreen: React.FC<LogsUploadProps> = ({ logsService, drive
       {/* Encryption Info Banner */}
       <View style={styles.encryptionBanner}>
         <Text style={styles.encryptionBannerText}>
-          All data is encrypted on-device. {encryptedCount > 0
+          E2E encrypted: Drive encrypts, cloud decrypts. {encryptedCount > 0
             ? `${encryptedCount} encrypted log${encryptedCount > 1 ? 's' : ''} pending upload.`
             : 'Logs are auto-deleted after cloud transfer.'}
         </Text>

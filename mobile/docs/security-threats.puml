@@ -1,0 +1,75 @@
+@startuml SyncV_Security_Threat_Model
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontSize 11
+
+title **Sync-V: Security Threat Model & Mitigations**\n
+
+' Use a deployment diagram style
+left to right direction
+
+' ============================================================
+' NODES
+' ============================================================
+node "Drive (C++)" as Drive {
+  [AES-256-CBC\nE2E Encryption] as DriveEnc
+  [Per-Device PSK\n(Pre-Shared Key)] as DrivePSK
+  [Constant-time\nToken Compare] as DriveAuth
+  [Path Traversal\nProtection] as DrivePath
+}
+
+node "Mobile (React Native)" as Mobile {
+  [Opaque Blob Router\n(No Crypto)] as MobRouter
+  [Auto-Delete\nAfter Upload] as MobDel
+  [No Content UI\n(Metadata Only)] as MobUI
+}
+
+node "Cloud (Node.js)" as CloudN {
+  [JWT Auth\n+ HTTPS] as CloudAuth
+  [AES-256-CBC\nDecryption] as CloudDec
+  [device_keys Table\n(PSK Storage)] as CloudKeys
+  [SQLite\nLog Storage] as CloudDB
+}
+
+' ============================================================
+' THREAT / MITIGATION TABLE
+' ============================================================
+note bottom of Drive
+  **DRIVE THREATS**
+  ====
+  | Threat | Status | Mitigation |
+  | Path traversal | MITIGATED | Canonical path check |
+  | Brute force token | MITIGATED | Constant-time compare |
+  | Data at rest | MITIGATED | AES-256-CBC |
+  | Data in transit | MITIGATED | E2E encrypted (PSK) |
+  | MITM on WiFi | MITIGATED | E2E — data opaque to MITM |
+  | No rate limiting | VULNERABLE | Add request throttle |
+end note
+
+note bottom of Mobile
+  **MOBILE THREATS**
+  ====
+  | Threat | Status | Mitigation |
+  | Data on device | MITIGATED | Opaque blobs + auto-delete |
+  | User views logs | MITIGATED | No content in UI |
+  | App restart | MITIGATED | Persistent blobs |
+  | Custom cipher | MITIGATED | Removed — drive uses AES-256 |
+  | Weak RNG | MITIGATED | No longer applies (no mobile crypto) |
+  | Heap dump | MITIGATED | No plaintext ever in memory |
+  | Root access | PARTIAL | Opaque blobs, but metadata visible |
+end note
+
+note bottom of CloudN
+  **CLOUD THREATS**
+  ====
+  | Threat | Status | Mitigation |
+  | Auth bypass | MITIGATED | JWT + route middleware |
+  | SQL injection | MITIGATED | Parameterized queries |
+  | E2E encrypt | MITIGATED | Drive encrypts → cloud decrypts |
+  | Password crack | VULNERABLE | SHA256 (need bcrypt) |
+  | PSK compromise | VULNERABLE | Per-device keys limit blast radius |
+  | No cert pinning | VULNERABLE | Add pinning on mobile |
+  | No audit log | VULNERABLE | Add access logging |
+end note
+
+@enduml

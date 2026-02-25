@@ -58,6 +58,13 @@ export function createDatabase(dbPath?: string): Database.Database {
       role TEXT NOT NULL DEFAULT 'viewer',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS device_keys (
+      device_id TEXT PRIMARY KEY REFERENCES devices(id),
+      psk TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      rotated_at TEXT DEFAULT (datetime('now'))
+    );
   `);
 
   // Migration: add new columns to existing logs tables
