@@ -48,6 +48,7 @@ const JWT_SECRET = envJwtSecret || 'syncv-dev-secret-change-in-production';
 
 export function createApp(dbPath?: string): { app: express.Express; db: Database.Database } {
   const app = express();
+  app.set('trust proxy', 1);
   app.use(express.json({ limit: '10mb' }));
   app.use(cookieParser());
 
