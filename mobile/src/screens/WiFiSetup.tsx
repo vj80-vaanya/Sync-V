@@ -73,12 +73,26 @@ export const WiFiSetupScreen: React.FC<WiFiSetupProps> = ({
     setNetworks([]);
     setSelectedSSID(null);
     try {
-      await wifiService.requestPermissions();
-      const results = await wifiService.scanForDrives();
-      setNetworks(results);
+      const granted = await wifiService.requestPermissions();
+      if (!granted) {
+        setPhase('failed');
+        setError('Location permission denied. Go to Settings > Apps > Sync-V > Permissions and enable Location.');
+        return;
+      }
+      const allNetworks = await wifiService.scanNetworks();
+      // Sort: SyncV-prefixed networks first, then by signal strength
+      const sorted = [...allNetworks]
+        .filter((n) => n.SSID && n.SSID.length > 0)
+        .sort((a, b) => {
+          const aIsDrive = a.SSID.startsWith(DRIVE_CONFIG.ssidPrefix) ? 0 : 1;
+          const bIsDrive = b.SSID.startsWith(DRIVE_CONFIG.ssidPrefix) ? 0 : 1;
+          if (aIsDrive !== bIsDrive) return aIsDrive - bIsDrive;
+          return b.level - a.level;
+        });
+      setNetworks(sorted);
       setPhase('idle');
-      if (results.length === 0) {
-        setError('No Sync-V drives found nearby. Make sure the drive is powered on.');
+      if (sorted.length === 0) {
+        setError('No WiFi networks found. Make sure Location Services (GPS) is turned ON.');
       }
     } catch (err) {
       setPhase('failed');
@@ -137,15 +151,19 @@ export const WiFiSetupScreen: React.FC<WiFiSetupProps> = ({
   const renderNetwork = ({ item }: { item: WiFiNetwork }) => {
     const selected = item.SSID === selectedSSID;
     const secured = isSecured(item.capabilities);
+    const isDrive = item.SSID.startsWith(DRIVE_CONFIG.ssidPrefix);
     return (
       <View>
         <TouchableOpacity
-          style={[listStyles.item, selected && listStyles.itemSelected]}
+          style={[listStyles.item, selected && listStyles.itemSelected, isDrive && listStyles.itemDrive]}
           onPress={() => handleNetworkTap(item.SSID)}
           activeOpacity={0.6}
         >
           <View style={listStyles.info}>
-            <Text style={listStyles.ssid}>{item.SSID}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={listStyles.ssid}>{item.SSID}</Text>
+              {isDrive && <Text style={listStyles.driveTag}> DRIVE</Text>}
+            </View>
             <Text style={listStyles.meta}>
               {secured ? 'Secured' : 'Open'} · {signalBars(item.level)}
             </Text>
@@ -266,7 +284,8 @@ export const WiFiSetupScreen: React.FC<WiFiSetupProps> = ({
             ListEmptyComponent={
               networks.length === 0 && phase === 'idle' ? (
                 <Text style={styles.emptyText}>
-                  Tap "Scan for Drives" to find nearby Sync-V drives
+                  Tap "Scan for Drives" to find nearby WiFi networks.{'\n'}
+                  Sync-V drives will be highlighted at the top.
                 </Text>
               ) : null
             }
@@ -341,9 +360,11 @@ const listStyles = StyleSheet.create({
     borderWidth: 1, borderColor: COLORS.border,
   },
   itemSelected: { borderColor: COLORS.primary, borderWidth: 2 },
+  itemDrive: { borderColor: COLORS.success, backgroundColor: COLORS.successBg },
   info: { flex: 1 },
   ssid: { fontSize: 16, fontWeight: '600', color: COLORS.textDark },
   meta: { fontSize: 12, color: COLORS.textMuted, marginTop: 2 },
+  driveTag: { fontSize: 10, fontWeight: '800', color: COLORS.success, letterSpacing: 0.5 },
   signal: { fontSize: 12, fontFamily: 'monospace', color: COLORS.textMuted },
   expandedArea: {
     backgroundColor: COLORS.card, borderRadius: 10, padding: 14,
